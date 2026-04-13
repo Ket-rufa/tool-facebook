@@ -1,0 +1,25 @@
+# Node
+frontend/node_modules/
+frontend/dist/
+
+# Go build
+*.exe
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+/build/bin/
+dist/
+
+# Logs
+*.log
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Env
+.env
