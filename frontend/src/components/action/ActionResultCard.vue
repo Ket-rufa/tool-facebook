@@ -41,6 +41,13 @@ const formatTime = (timeStr: string) => {
           <span v-html="icons.clock"></span>
           {{ formatTime(result.executed_at) }}
         </span>
+        <span class="meta-item" v-if="result.account_id">
+          <span v-html="icons.users"></span>
+          {{ result.account_id }}
+        </span>
+        <span class="meta-item capitalize" v-if="result.reaction_type">
+          {{ result.reaction_type }}
+        </span>
         <span class="meta-badge" :class="result.dry_run ? 'bd-dry' : 'bd-real'">
           {{ result.dry_run ? 'Dry Run' : 'Real Run' }}
         </span>

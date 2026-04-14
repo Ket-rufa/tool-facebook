@@ -42,7 +42,9 @@ const getStatusClass = (status: string) => {
           <thead>
             <tr>
               <th>Thời gian</th>
+              <th>Tài khoản</th>
               <th>Mã Bài Viết</th>
+              <th>Cảm xúc</th>
               <th>Trạng Thái</th>
               <th>Message</th>
             </tr>
@@ -50,8 +52,15 @@ const getStatusClass = (status: string) => {
           <tbody>
             <tr v-for="log in logs" :key="log.id" class="log-row">
               <td class="cell-time">{{ formatTime(log.executed_at) }}</td>
+              <td class="cell-account">
+                <div class="acc-name-cell">{{ log.account_display_name || log.account_id || '—' }}</div>
+                <div class="acc-id-cell">{{ log.account_id }}</div>
+              </td>
               <td class="cell-id">
                 <span class="id-text">{{ log.post_id || '-' }}</span>
+              </td>
+              <td class="cell-reaction capitalize">
+                {{ log.reaction_type || 'like' }}
               </td>
               <td>
                 <div class="status-wrapper">
@@ -211,5 +220,27 @@ const getStatusClass = (status: string) => {
   overflow: hidden;
   text-overflow: ellipsis;
   color: var(--c-text-muted);
+}
+
+.acc-text {
+  font-weight: 600;
+  color: var(--c-primary);
+  font-size: 12px;
+}
+
+.acc-name-cell {
+  font-weight: 600;
+  color: var(--c-text-title);
+  font-size: 13px;
+}
+
+.acc-id-cell {
+  font-size: 10px;
+  color: var(--c-text-muted);
+  font-family: monospace;
+}
+
+.capitalize {
+  text-transform: capitalize;
 }
 </style>

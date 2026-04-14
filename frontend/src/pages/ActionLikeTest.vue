@@ -6,7 +6,7 @@ import ActionResultCard from '../components/action/ActionResultCard.vue'
 import ActionLogList from '../components/action/ActionLogList.vue'
 import { actionsService } from '../services/actionsService'
 import { sessionService } from '../services/sessionService'
-import type { ActionResponse, SessionStatus, ActionLog } from '../types/action'
+import type { ActionResponse, SessionStatus, ActionLog, ActionRequest } from '../types/action'
 
 const isLoading = ref(false)
 const sessionInfo = ref<SessionStatus | null>(null)
@@ -26,19 +26,30 @@ const loadData = async () => {
   }
 }
 
-const handleTestLike = async (payload: { postId: string, dryRun: boolean }) => {
+const handleTestLike = async (payloads: ActionRequest[]) => {
   isLoading.value = true
   latestResult.value = null
   
   try {
-    const res = await actionsService.likePost(payload.postId, payload.dryRun)
-    latestResult.value = res
+    for (const payload of payloads) {
+      const res = await actionsService.likePost(payload)
+      latestResult.value = res // Show the latest result conceptually, or update it per tick
+    }
   } catch (error) {
     console.error('Test Action error', error)
   } finally {
     isLoading.value = false
     const recentLogs = await actionsService.getActionLogs()
     logs.value = recentLogs
+  }
+}
+
+const handleAccountUpdate = async (accountId: string) => {
+  try {
+    sessionInfo.value = null // show loading state momentarily
+    sessionInfo.value = await sessionService.getSessionStatus(accountId)
+  } catch (error) {
+    console.error('Error fetching session for account', error)
   }
 }
 
@@ -50,8 +61,8 @@ onMounted(() => {
 <template>
   <div class="test-page">
     <div class="page-header">
-      <h1 class="page-title">Thử nghiệm Like</h1>
-      <p class="page-desc">Giả lập và kiểm tra behavior của chức năng Like bài viết trên môi trường an toàn.</p>
+      <h1 class="page-title">Thử nghiệm cảm xúc</h1>
+      <p class="page-desc">Giả lập và kiểm tra hành vi thả cảm xúc lên bài viết trong môi trường an toàn.</p>
     </div>
 
     <div class="test-layout">
@@ -59,7 +70,8 @@ onMounted(() => {
       <div class="col-left">
         <ActionTestPanel 
           :isLoading="isLoading" 
-          @submit="handleTestLike" 
+          @submit="handleTestLike"
+          @updateAccount="handleAccountUpdate"
         />
         
         <div v-show="latestResult" class="result-wrapper">

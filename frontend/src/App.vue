@@ -11,6 +11,7 @@ import Media from './pages/Media.vue'
 import Integrations from './pages/Integrations.vue'
 import Settings from './pages/Settings.vue'
 import ActionLikeTest from './pages/ActionLikeTest.vue'
+import Accounts from './pages/Accounts.vue'
 
 // Basic routing state
 const currentRoute = ref('overview')
@@ -34,6 +35,7 @@ provide('navigate', (route: string) => {
     <Integrations v-if="currentRoute === 'integrations'" />
     <Settings v-if="currentRoute === 'settings'" />
     <ActionLikeTest v-if="currentRoute === 'action-like-test'" />
+    <Accounts v-if="currentRoute === 'accounts'" />
   </AppShell>
 </template>
 
