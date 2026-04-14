@@ -48,6 +48,8 @@ type AccountProfile struct {
 	LastCheckedAt string `json:"lastCheckedAt"`
 	IsDefault     bool   `json:"isDefault"`
 	Note          string `json:"note"`
+	Cookie        string `json:"cookie,omitempty"`
+	FbDtsg        string `json:"fbDtsg,omitempty"`
 }
 
 // AttachFlow đại diện cho một phiên gắn tài khoản đang diễn ra

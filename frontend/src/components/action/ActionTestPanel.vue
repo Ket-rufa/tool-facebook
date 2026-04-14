@@ -3,6 +3,7 @@ import { ref, computed, watch, onMounted } from 'vue'
 import type { ActionRequest } from '../../types/action'
 import { icons } from '../../utils/icons'
 import { ListAccounts } from '../../../wailsjs/go/accounts/AccountService'
+import { GetReactDocID, UpdateReactDocID } from '../../../wailsjs/go/actiontest/ActionHandler'
 import type { accounts } from '../../../wailsjs/go/models'
 
 const props = defineProps<{
@@ -19,13 +20,13 @@ const accountsList = ref<accounts.AccountProfile[]>([])
 const accountsLoading = ref(false)
 
 const reactions = [
-  { value: 'like', label: 'Like', icon: '👍' },
-  { value: 'love', label: 'Tim', icon: '❤️' },
-  { value: 'care', label: 'Thương thương', icon: '🥰' },
-  { value: 'haha', label: 'Haha', icon: '😆' },
-  { value: 'wow', label: 'Wow', icon: '😮' },
-  { value: 'sad', label: 'Buồn', icon: '😢' },
-  { value: 'angry', label: 'Phẫn nộ', icon: '😡' }
+  { value: 'like', label: 'Like', icon: '👍', fb_id: '1635855486666999' },
+  { value: 'love', label: 'Tim', icon: '❤️', fb_id: '1678524932434102' },
+  { value: 'care', label: 'Thương thương', icon: '🥰', fb_id: '613557422527858' },
+  { value: 'haha', label: 'Haha', icon: '😆', fb_id: '115940658764963' },
+  { value: 'wow', label: 'Wow', icon: '😮', fb_id: '478547315650144' },
+  { value: 'sad', label: 'Buồn', icon: '😢', fb_id: '908563459236466' },
+  { value: 'angry', label: 'Phẫn nộ', icon: '😡', fb_id: '444813342392137' }
 ]
 
 const selectedAccounts = ref<string[]>([])
@@ -33,6 +34,11 @@ const postId = ref('')
 const selectedReaction = ref('like')
 const dryRun = ref(true)
 const validationError = ref('')
+const reactDocID = ref('')
+const docIdSaving = ref(false)
+const docIdError = ref('')
+const docIdNotice = ref('')
+// doc_id đã bị xóa khỏi UI — backend tự resolve từ graphqlDocID constant nội bộ
 
 // ── Load accounts thật từ backend ─────────────────────────────────────
 async function loadAccounts() {
@@ -57,8 +63,56 @@ async function loadAccounts() {
   }
 }
 
+const isNumericDocID = (value: string) => /^\d+$/.test(value)
+
+async function loadReactDocID() {
+  try {
+    const v = await GetReactDocID()
+    reactDocID.value = (v || '').trim()
+  } catch (e) {
+    console.error('Khong the tai react doc_id:', e)
+  }
+}
+
+async function persistReactDocID(showNotice = true): Promise<boolean> {
+  docIdError.value = ''
+  const value = reactDocID.value.trim()
+
+  if (value && !isNumericDocID(value)) {
+    docIdNotice.value = ''
+    docIdError.value = 'Doc ID chỉ được chứa chữ số.'
+    return false
+  }
+
+  try {
+    docIdSaving.value = true
+    const saved = await UpdateReactDocID(value)
+    reactDocID.value = (saved || '').trim()
+    if (showNotice) {
+      docIdNotice.value = reactDocID.value ? 'Đã lưu doc_id cục bộ.' : 'Đã xóa doc_id cục bộ.'
+    }
+    return true
+  } catch (e: any) {
+    docIdNotice.value = ''
+    docIdError.value = 'Không lưu được doc_id: ' + (e?.message || e?.toString() || 'Unknown error')
+    return false
+  } finally {
+    docIdSaving.value = false
+  }
+}
+
+const handleSaveDocID = async () => {
+  await persistReactDocID(true)
+}
+
+const handleClearDocID = async () => {
+  reactDocID.value = ''
+  await persistReactDocID(true)
+}
+
 onMounted(() => {
   loadAccounts()
+  loadReactDocID()
 })
 
 watch(selectedAccounts, (newVal) => {
@@ -111,7 +165,7 @@ const sessionStatusLabel = (status: string) => {
 }
 
 // ── Submit ────────────────────────────────────────────────────────────
-const handleSubmit = () => {
+const handleSubmit = async () => {
   validationError.value = ''
 
   if (!hasAccounts.value) {
@@ -123,18 +177,42 @@ const handleSubmit = () => {
     return
   }
   if (!postId.value.trim()) {
-    validationError.value = 'Vui lòng nhập mã bài viết (Post ID)'
+    validationError.value = 'Vui lòng nhập Feedback ID (base64)'
     return
   }
-  if (!selectedReaction.value) {
-    validationError.value = 'Vui lòng chọn loại cảm xúc'
+	if (!selectedReaction.value) {
+		validationError.value = 'Vui lòng chọn loại cảm xúc'
+		return
+	}
+
+  if (!dryRun.value && !reactDocID.value.trim()) {
+    validationError.value = 'Vui lòng nhập GraphQL doc_id trước khi chạy Real Run.'
     return
   }
 
+	// 1) Validation Semantic ID 
+	if (!dryRun.value && (!postId.value.trim().startsWith("ZmVlZ") && !postId.value.trim().includes("=="))) {
+		validationError.value = 'ID không đúng Semantic. Meta GraphQL yêu cầu Feedback ID dạng Base64 (feedback:<id> -> ZmVlZGJhY2s6...). Không truyền pfbid hoặc ID bài viết tại đây.'
+		return
+	}
+
+  if (!dryRun.value) {
+    const ok = await persistReactDocID(false)
+    if (!ok) {
+      validationError.value = docIdError.value || 'Không lưu được GraphQL doc_id.'
+      return
+    }
+  }
+
+	const selectedReactionObj = reactions.find(r => r.value === selectedReaction.value)
+
+  // doc_id KHÔNG được gửi từ frontend — backend tự resolve
+  console.debug('[DocID-Frontend] Submitting payload WITHOUT doc_id — backend resolves internally')
   const payloads: ActionRequest[] = selectedAccounts.value.map((id) => ({
     post_id: postId.value.trim(),
     account_id: id,
     reaction_type: selectedReaction.value,
+    reaction_id: selectedReactionObj ? selectedReactionObj.fb_id : '',
     dry_run: dryRun.value,
     actor_source: 'manual_test'
   }))
@@ -199,14 +277,46 @@ const handleSubmit = () => {
       <h2 class="card-title">Cấu hình cảm xúc</h2>
       
       <div class="form-group">
-        <label class="form-label">Mã bài viết (Post ID)</label>
+        <label class="form-label">Feedback ID (Base64)</label>
         <input
           v-model="postId"
           type="text"
           class="form-input"
-          placeholder="VD: FB_982129"
+          placeholder="VD: ZmVlZGJhY2s6MTUw..."
           :disabled="isLoading"
         />
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">GraphQL Doc ID (Real Run)</label>
+        <div class="docid-row">
+          <input
+            v-model="reactDocID"
+            type="text"
+            class="form-input"
+            placeholder="VD: 26477330531933156"
+            :disabled="isLoading || docIdSaving"
+          />
+          <button
+            type="button"
+            class="btn btn-outline btn-docid"
+            :disabled="isLoading || docIdSaving"
+            @click="handleSaveDocID"
+          >
+            {{ docIdSaving ? 'Đang lưu...' : 'Lưu' }}
+          </button>
+          <button
+            type="button"
+            class="btn btn-link btn-docid"
+            :disabled="isLoading || docIdSaving"
+            @click="handleClearDocID"
+          >
+            Xóa
+          </button>
+        </div>
+        <div class="docid-hint">Lưu cục bộ để Real Run dùng tự động, không cần nhập terminal mỗi lần.</div>
+        <div v-if="docIdError" class="docid-error">{{ docIdError }}</div>
+        <div v-else-if="docIdNotice" class="docid-note">{{ docIdNotice }}</div>
       </div>
 
       <div class="form-group mt-4">
@@ -248,7 +358,7 @@ const handleSubmit = () => {
       <h3 class="summary-title">Tóm tắt hành động</h3>
       <div class="summary-grid">
         <div class="sum-row"><span>Tài khoản:</span> <strong>{{ getAccountName }}</strong></div>
-        <div class="sum-row"><span>Bài viết:</span> <strong>{{ postId || '—' }}</strong></div>
+        <div class="sum-row"><span>Feedback ID:</span> <strong>{{ postId || '—' }}</strong></div>
         <div class="sum-row"><span>Cảm xúc:</span> <strong>{{ getReactionLabel }}</strong></div>
         <div class="sum-row"><span>Chế độ:</span> <strong>{{ dryRun ? 'Dry Run' : 'Real Run' }}</strong></div>
       </div>
@@ -384,6 +494,37 @@ const handleSubmit = () => {
 }
 .form-input:focus { border-color: var(--c-primary); background: var(--c-surface); }
 .mt-4 { margin-top: 24px; }
+
+.docid-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.btn-docid {
+  height: 40px;
+  white-space: nowrap;
+}
+
+.docid-hint {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--c-text-muted);
+}
+
+.docid-error {
+  margin-top: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--c-danger);
+}
+
+.docid-note {
+  margin-top: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--c-success, #059669);
+}
 
 
 /* Reaction Grid */

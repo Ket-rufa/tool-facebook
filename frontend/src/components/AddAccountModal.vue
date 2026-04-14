@@ -5,7 +5,8 @@ import {
   StartAccountAttachFlow,
   GetAttachFlowStatus,
   CompleteAccountAttachFlow,
-  CancelAccountAttachFlow
+  CancelAccountAttachFlow,
+  ProcessCookieAttachFlow
 } from '../../wailsjs/go/accounts/AccountService'
 
 const emit = defineEmits(['close', 'complete'])
@@ -16,9 +17,34 @@ const flowId = ref('')
 const flowPreview = ref<any>(null)
 const errorMsg = ref('')
 const editableName = ref('')  // Tên do user nhập/sửa
+const attachMethod = ref('browser')
+const cookieString = ref('')
+const isParsingCookie = ref(false)
 
 function handleStartFlow() {
-  currentStep.value = 2
+  if (attachMethod.value === 'browser') {
+    currentStep.value = 2
+  } else {
+    currentStep.value = 2.5
+  }
+}
+
+async function handleCookieSubmit() {
+  isParsingCookie.value = true
+  errorMsg.value = ''
+  try {
+    const status = await ProcessCookieAttachFlow(cookieString.value)
+    flowPreview.value = status.accountPreview || flowPreview.value
+    flowId.value = status.flowId
+    editableName.value = flowPreview.value?.displayName || ''
+    isParsingCookie.value = false
+    currentStep.value = 3
+  } catch (e: any) {
+    console.error('Lỗi phân tích Cookie:', e)
+    const msg = typeof e === 'string' ? e : (e?.message || JSON.stringify(e))
+    errorMsg.value = msg || 'Có lỗi xảy ra khi phân tích Cookie.'
+    isParsingCookie.value = false
+  }
 }
 
 async function handleOpenLoginWindow() {
@@ -100,16 +126,31 @@ async function handleCancel() {
         <div class="step-content">
           <!-- Step 1: Giới thiệu -->
           <div v-if="currentStep === 1" class="step-pane">
-            <h3>Quy trình gắn phiên (Session)</h3>
-            <p>Hệ thống sẽ mở một cửa sổ trình duyệt độc lập, hoàn toàn riêng biệt và vô hình với phần còn lại của ứng dụng.</p>
-            <p>Bạn chỉ cần thực hiện đăng nhập bình thường như trên trình duyệt. Sau khi thành công, hệ thống sẽ bảo lưu phiên hiện tại và tự động đóng cửa sổ đăng nhập.</p>
-            <div class="alert alert-info">
-              <span class="a-icon text-primary" v-html="icons.info"></span>
-              Ứng dụng KHÔNG lưu lại Mật khẩu của bạn, chỉ sử dụng Token / Cookie cục bộ.
+            <h3>Chọn phương thức đính kèm</h3>
+            
+            <div class="method-cards">
+              <label class="m-card" :class="{ 'active': attachMethod === 'browser' }">
+                <input type="radio" value="browser" v-model="attachMethod" class="sr-only" />
+                <span class="mc-icon" v-html="icons.layout"></span>
+                <div class="mc-content">
+                  <div class="mc-title">Mở Cửa Sổ Trình Duyệt</div>
+                  <div class="mc-desc">Đăng nhập trực quan qua cửa sổ mở riêng biệt. Ứng dụng không lưu mật khẩu.</div>
+                </div>
+              </label>
+              
+              <label class="m-card" :class="{ 'active': attachMethod === 'cookie' }">
+                <input type="radio" value="cookie" v-model="attachMethod" class="sr-only" />
+                <span class="mc-icon" v-html="icons.code"></span>
+                <div class="mc-content">
+                  <div class="mc-title">Nhập Cookie (Khuyên dùng)</div>
+                  <div class="mc-desc">Dán chuẩn Cookie để hỗ trợ các chức năng Execute (Real Run) sau này.</div>
+                </div>
+              </label>
             </div>
+
             <div class="m-actions">
               <button class="btn btn-outline" @click="handleCancel">Hủy</button>
-              <button class="btn btn-primary" @click="handleStartFlow">Bắt đầu <span class="icon" v-html="icons.arrowRight"></span></button>
+              <button class="btn btn-primary" @click="handleStartFlow">Tiếp theo <span class="icon" v-html="icons.arrowRight"></span></button>
             </div>
           </div>
 
@@ -130,6 +171,33 @@ async function handleCancel() {
               <p class="text-sm text-muted">Vui lòng đăng nhập ở cửa sổ vừa mở. Popup này sẽ tự chuyển trạng thái khi bạn đăng nhập thành công.</p>
               <div v-if="errorMsg" class="error-msg">{{ errorMsg }}</div>
             </template>
+          </div>
+
+          <!-- Step 2.5: Nhập Cookie -->
+          <div v-if="currentStep === 2.5" class="step-pane">
+            <h3>Nhập Cookie Facebook</h3>
+            <p>Dán chuỗi Cookie đầy đủ chứa <code>c_user</code> và <code>xs</code> lấy từ tiện ích trình duyệt của bạn (VD: J2TEAM Cookie / GetCookie).</p>
+            <textarea 
+              v-model="cookieString" 
+              class="cookie-input" 
+              rows="5" 
+              placeholder="Ví dụ: sb=123...; c_user=1000...; xs=...; fr=...;"
+              :disabled="isParsingCookie"
+            ></textarea>
+            
+            <div class="alert alert-info">
+              <span class="a-icon text-primary" v-html="icons.info"></span>
+              Hệ thống sẽ dùng Cookie để lấy fb_dtsg. Cookie của bạn bảo mật 100% trong máy tĩnh.
+            </div>
+
+            <div v-if="errorMsg" class="error-msg">{{ errorMsg }}</div>
+            
+            <div class="m-actions">
+              <button class="btn btn-outline" @click="currentStep = 1">Quay lại</button>
+              <button class="btn btn-primary" @click="handleCookieSubmit" :disabled="!cookieString.trim() || isParsingCookie">
+                <span class="spinner" v-if="isParsingCookie"></span> Xác minh Cookie
+              </button>
+            </div>
           </div>
 
           <!-- Step 3: Hoàn tất & Xác nhận -->
@@ -471,7 +539,7 @@ async function handleCancel() {
   color: var(--c-text-muted);
 }
 
-.name-input {
+.name-input, .cookie-input {
   width: 100%;
   padding: 8px 12px;
   border: 1px solid #93c5fd;
@@ -485,8 +553,81 @@ async function handleCancel() {
   transition: border-color 0.2s;
 }
 
-.name-input:focus {
+.cookie-input {
+  font-family: monospace;
+  font-weight: 500;
+  font-size: 12px;
+  resize: vertical;
+  min-height: 80px;
+}
+
+.name-input:focus, .cookie-input:focus {
   border-color: var(--c-primary);
   box-shadow: 0 0 0 3px #dbeafe;
+}
+
+/* Method Cards */
+.method-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.m-card {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 16px;
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  background: #f9fafb;
+  transition: all 0.2s;
+}
+
+.m-card:hover {
+  background: #f3f4f6;
+  border-color: #d1d5db;
+}
+
+.m-card.active {
+  background: #eff6ff;
+  border-color: var(--c-primary);
+  box-shadow: 0 0 0 1px var(--c-primary);
+}
+
+.mc-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: white;
+  border: 1px solid var(--c-border-light);
+  color: var(--c-text-main);
+}
+
+.m-card.active .mc-icon {
+  color: var(--c-primary);
+  border-color: #bfdbfe;
+  background: white;
+}
+
+.mc-content {
+  flex: 1;
+}
+
+.mc-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--c-text-title);
+  margin-bottom: 4px;
+}
+
+.mc-desc {
+  font-size: 12px;
+  color: var(--c-text-muted);
 }
 </style>

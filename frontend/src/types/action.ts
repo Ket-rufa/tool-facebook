@@ -1,7 +1,9 @@
+// doc_id đã bị xóa — backend tự resolve nội bộ từ graphqlDocID constant trong executor.go
 export interface ActionRequest {
   post_id: string
   account_id: string
   reaction_type: string
+  reaction_id: string
   dry_run: boolean
   actor_source: string
 }
@@ -30,9 +32,8 @@ export interface ActionResponse {
   post_id: string
   account_id: string
   account_display_name?: string
-  reaction_type?: string
-  comment_text?: string
-  post_text?: string
+  reaction_type: string
+  reaction_id: string
   dry_run: boolean
   message: string
   executed_at: string
@@ -49,10 +50,9 @@ export interface ActionLog {
   action_type: string
   account_id: string
   account_display_name?: string
-  post_id?: string
-  reaction_type?: string
-  comment_text?: string
-  post_text?: string
+  post_id: string
+  reaction_type: string
+  reaction_id: string
   status: string
   dry_run: boolean
   message: string

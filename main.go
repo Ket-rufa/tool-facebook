@@ -41,7 +41,11 @@ func main() {
 
 	// Khởi tạo action handler với cùng store và fbStore
 	sessionHandler := actiontest.NewSessionHandler()
-	actionHandler := actiontest.NewActionHandlerWithStore(sessionHandler, store, fbStore)
+	configStore, err := actiontest.NewConfigStore(dataDir)
+	if err != nil {
+		log.Fatalf("Khong the khoi tao action config store: %v", err)
+	}
+	actionHandler := actiontest.NewActionHandlerWithStoreAndConfig(sessionHandler, store, configStore)
 
 	err = wails.Run(&options.App{
 		Title:  "Tool Facebook",
