@@ -7,7 +7,8 @@ import Logs from './pages/Logs.vue'
 import Profiles from './pages/Profiles.vue'
 import Posts from './pages/Posts.vue'
 import PostDetail from './pages/PostDetail.vue'
-import Media from './pages/Media.vue'
+import ActionCommentTest from './pages/ActionCommentTest.vue'
+import ActionPostTest from './pages/ActionPostTest.vue'
 import Integrations from './pages/Integrations.vue'
 import Settings from './pages/Settings.vue'
 import ActionLikeTest from './pages/ActionLikeTest.vue'
@@ -31,7 +32,8 @@ provide('navigate', (route: string) => {
     <Profiles v-if="currentRoute === 'profiles'" />
     <Posts v-if="currentRoute === 'posts'" />
     <PostDetail v-if="currentRoute === 'post-detail'" />
-    <Media v-if="currentRoute === 'media'" />
+    <ActionCommentTest v-if="currentRoute === 'action-comment-test'" />
+    <ActionPostTest v-if="currentRoute === 'action-post-test'" />
     <Integrations v-if="currentRoute === 'integrations'" />
     <Settings v-if="currentRoute === 'settings'" />
     <ActionLikeTest v-if="currentRoute === 'action-like-test'" />

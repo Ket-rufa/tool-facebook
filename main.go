@@ -11,6 +11,7 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
 	"github.com/yourname/tool-facebook/internal/accounts"
 	"github.com/yourname/tool-facebook/internal/actiontest"
+	"github.com/yourname/tool-facebook/internal/fbdata"
 )
 
 //go:embed all:frontend/dist
@@ -29,12 +30,18 @@ func main() {
 		log.Fatalf("Không thể khởi tạo account store: %v", err)
 	}
 
+	// Khởi tạo FB Data Store
+	fbStore, err := fbdata.NewJSONStore(dataDir)
+	if err != nil {
+		log.Fatalf("Không thể khởi tạo fb data store: %v", err)
+	}
+
 	// Tạo AccountService dùng store đã tạo
 	accountService := accounts.NewAccountServiceWithStore(store)
 
-	// Khởi tạo action handler với cùng store để validate session
+	// Khởi tạo action handler với cùng store và fbStore
 	sessionHandler := actiontest.NewSessionHandler()
-	actionHandler := actiontest.NewActionHandlerWithStore(sessionHandler, store)
+	actionHandler := actiontest.NewActionHandlerWithStore(sessionHandler, store, fbStore)
 
 	err = wails.Run(&options.App{
 		Title:  "Tool Facebook",

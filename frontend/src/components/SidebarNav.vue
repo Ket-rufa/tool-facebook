@@ -11,7 +11,9 @@ const navItems = [
   { id: 'tasks', label: 'Công việc quét', icon: icons.repeat },
   { id: 'profiles', label: 'Hồ sơ', icon: icons.users },
   { id: 'posts', label: 'Bài viết', icon: icons.fileText },
-  { id: 'media', label: 'Phương tiện', icon: icons.image },
+  { id: 'action-comment-test', label: 'Thử nghiệm bình luận', icon: icons.checkBadge },
+  { id: 'action-post-test', label: 'Thử nghiệm đăng bài', icon: icons.fileText },
+
   { id: 'accounts', label: 'Tài khoản', icon: icons.users },
   { id: 'logs', label: 'Nhật ký', icon: icons.clock },
   { id: 'integrations', label: 'Tích hợp', icon: icons.plug },

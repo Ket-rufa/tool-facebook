@@ -82,8 +82,10 @@ export namespace actiontest {
 	    action_type: string;
 	    account_id: string;
 	    account_display_name: string;
-	    post_id: string;
-	    reaction_type: string;
+	    post_id?: string;
+	    reaction_type?: string;
+	    comment_text?: string;
+	    post_text?: string;
 	    status: string;
 	    dry_run: boolean;
 	    message: string;
@@ -102,7 +104,145 @@ export namespace actiontest {
 	        this.account_display_name = source["account_display_name"];
 	        this.post_id = source["post_id"];
 	        this.reaction_type = source["reaction_type"];
+	        this.comment_text = source["comment_text"];
+	        this.post_text = source["post_text"];
 	        this.status = source["status"];
+	        this.dry_run = source["dry_run"];
+	        this.message = source["message"];
+	        this.executed_at = this.convertValues(source["executed_at"], null);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class CommentPostRequest {
+	    post_id: string;
+	    account_id: string;
+	    comment_text: string;
+	    dry_run: boolean;
+	    actor_source: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new CommentPostRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.post_id = source["post_id"];
+	        this.account_id = source["account_id"];
+	        this.comment_text = source["comment_text"];
+	        this.dry_run = source["dry_run"];
+	        this.actor_source = source["actor_source"];
+	    }
+	}
+	export class CommentPostResponse {
+	    success: boolean;
+	    status: string;
+	    action: string;
+	    post_id: string;
+	    account_id: string;
+	    account_display_name: string;
+	    comment_text: string;
+	    dry_run: boolean;
+	    message: string;
+	    // Go type: time
+	    executed_at: any;
+	
+	    static createFrom(source: any = {}) {
+	        return new CommentPostResponse(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.success = source["success"];
+	        this.status = source["status"];
+	        this.action = source["action"];
+	        this.post_id = source["post_id"];
+	        this.account_id = source["account_id"];
+	        this.account_display_name = source["account_display_name"];
+	        this.comment_text = source["comment_text"];
+	        this.dry_run = source["dry_run"];
+	        this.message = source["message"];
+	        this.executed_at = this.convertValues(source["executed_at"], null);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class CreatePostRequest {
+	    account_id: string;
+	    post_text: string;
+	    image_paths?: string[];
+	    dry_run: boolean;
+	    actor_source: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new CreatePostRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.account_id = source["account_id"];
+	        this.post_text = source["post_text"];
+	        this.image_paths = source["image_paths"];
+	        this.dry_run = source["dry_run"];
+	        this.actor_source = source["actor_source"];
+	    }
+	}
+	export class CreatePostResponse {
+	    success: boolean;
+	    status: string;
+	    action: string;
+	    account_id: string;
+	    account_display_name: string;
+	    post_text: string;
+	    dry_run: boolean;
+	    message: string;
+	    // Go type: time
+	    executed_at: any;
+	
+	    static createFrom(source: any = {}) {
+	        return new CreatePostResponse(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.success = source["success"];
+	        this.status = source["status"];
+	        this.action = source["action"];
+	        this.account_id = source["account_id"];
+	        this.account_display_name = source["account_display_name"];
+	        this.post_text = source["post_text"];
 	        this.dry_run = source["dry_run"];
 	        this.message = source["message"];
 	        this.executed_at = this.convertValues(source["executed_at"], null);
