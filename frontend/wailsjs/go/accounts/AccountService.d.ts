@@ -18,6 +18,8 @@ export function GetDefaultAccount():Promise<accounts.AccountProfile>;
 
 export function ListAccounts():Promise<Array<accounts.AccountProfile>>;
 
+export function ProcessCookieAttachFlow(arg1:string):Promise<accounts.AttachFlowStatusResponse>;
+
 export function RemoveAccount(arg1:string):Promise<Array<accounts.AccountProfile>>;
 
 export function SetDefaultAccount(arg1:string):Promise<Array<accounts.AccountProfile>>;

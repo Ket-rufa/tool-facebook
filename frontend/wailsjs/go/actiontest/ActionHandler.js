@@ -6,6 +6,14 @@ export function GetActionLogs() {
   return window['go']['actiontest']['ActionHandler']['GetActionLogs']();
 }
 
+export function GetReactDocID() {
+  return window['go']['actiontest']['ActionHandler']['GetReactDocID']();
+}
+
 export function LikePost(arg1) {
   return window['go']['actiontest']['ActionHandler']['LikePost'](arg1);
+}
+
+export function UpdateReactDocID(arg1) {
+  return window['go']['actiontest']['ActionHandler']['UpdateReactDocID'](arg1);
 }

@@ -4,4 +4,8 @@ import {actiontest} from '../models';
 
 export function GetActionLogs():Promise<Array<actiontest.ActionLog>>;
 
+export function GetReactDocID():Promise<string>;
+
 export function LikePost(arg1:actiontest.LikePostRequest):Promise<actiontest.LikePostResponse>;
+
+export function UpdateReactDocID(arg1:string):Promise<string>;

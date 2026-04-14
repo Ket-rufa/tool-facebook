@@ -34,6 +34,10 @@ export function ListAccounts() {
   return window['go']['accounts']['AccountService']['ListAccounts']();
 }
 
+export function ProcessCookieAttachFlow(arg1) {
+  return window['go']['accounts']['AccountService']['ProcessCookieAttachFlow'](arg1);
+}
+
 export function RemoveAccount(arg1) {
   return window['go']['accounts']['AccountService']['RemoveAccount'](arg1);
 }

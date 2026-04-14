@@ -27,27 +27,43 @@ const (
 	StatusFailed          = "failed"
 )
 
-// LikePostRequest — payload chuẩn hóa đầy đủ từ frontend
+// ActionErrorCode represents detailed logical errors
+type ActionErrorCode string
+
+const (
+	ErrIDMismatch      ActionErrorCode = "ERR_ID_MISMATCH"
+	ErrSessionMissing  ActionErrorCode = "ERR_SESSION_CONTEXT_MISSING"
+	ErrActorMismatch   ActionErrorCode = "ERR_ACTOR_MISMATCH"
+	ErrStaleContext    ActionErrorCode = "ERR_STALE_TRACKING_CONTEXT"
+	ErrGraphqlFB       ActionErrorCode = "ERR_GRAPHQL_FB_ERROR"
+	ErrMalformed       ActionErrorCode = "ERR_MALFORMED_REQUEST"
+)
+
+// LikePostRequest — payload chuan hoa day du tu frontend
+// doc_id KHONG ton tai trong struct nay — da xoa hoan toan khoi runtime path (HUONG A)
 type LikePostRequest struct {
 	PostID       string `json:"post_id"`
 	AccountID    string `json:"account_id"`
 	ReactionType string `json:"reaction_type"`
+	ReactionID   string `json:"reaction_id"`
 	DryRun       bool   `json:"dry_run"`
 	ActorSource  string `json:"actor_source"`
 }
 
 // LikePostResponse — response đầy đủ trả về frontend
 type LikePostResponse struct {
-	Success            bool      `json:"success"`
-	Status             string    `json:"status"`
-	Action             string    `json:"action"`
-	PostID             string    `json:"post_id"`
-	AccountID          string    `json:"account_id"`
-	AccountDisplayName string    `json:"account_display_name"`
-	ReactionType       string    `json:"reaction_type"`
-	DryRun             bool      `json:"dry_run"`
-	Message            string    `json:"message"`
-	ExecutedAt         time.Time `json:"executed_at"`
+	Success            bool            `json:"success"`
+	Status             string          `json:"status"`
+	Action             string          `json:"action"`
+	PostID             string          `json:"post_id"`
+	AccountID          string          `json:"account_id"`
+	AccountDisplayName string          `json:"account_display_name"`
+	ReactionType       string          `json:"reaction_type"`
+	ReactionID         string          `json:"reaction_id"`
+	DryRun             bool            `json:"dry_run"`
+	Message            string          `json:"message"`
+	ErrorCode          ActionErrorCode `json:"error_code,omitempty"`
+	ExecutedAt         time.Time       `json:"executed_at"`
 }
 
 // SessionStatus represents the current session status
@@ -65,6 +81,7 @@ type ActionLog struct {
 	AccountDisplayName string    `json:"account_display_name"`
 	PostID             string    `json:"post_id"`
 	ReactionType       string    `json:"reaction_type"`
+	ReactionID         string    `json:"reaction_id"`
 	Status             string    `json:"status"`
 	DryRun             bool      `json:"dry_run"`
 	Message            string    `json:"message"`

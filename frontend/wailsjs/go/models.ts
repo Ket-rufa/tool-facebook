@@ -13,6 +13,8 @@ export namespace accounts {
 	    lastCheckedAt: string;
 	    isDefault: boolean;
 	    note: string;
+	    cookie?: string;
+	    fbDtsg?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new AccountProfile(source);
@@ -32,6 +34,8 @@ export namespace accounts {
 	        this.lastCheckedAt = source["lastCheckedAt"];
 	        this.isDefault = source["isDefault"];
 	        this.note = source["note"];
+	        this.cookie = source["cookie"];
+	        this.fbDtsg = source["fbDtsg"];
 	    }
 	}
 	export class AttachFlowStatusResponse {
@@ -84,6 +88,7 @@ export namespace actiontest {
 	    account_display_name: string;
 	    post_id: string;
 	    reaction_type: string;
+	    reaction_id: string;
 	    status: string;
 	    dry_run: boolean;
 	    message: string;
@@ -102,6 +107,7 @@ export namespace actiontest {
 	        this.account_display_name = source["account_display_name"];
 	        this.post_id = source["post_id"];
 	        this.reaction_type = source["reaction_type"];
+	        this.reaction_id = source["reaction_id"];
 	        this.status = source["status"];
 	        this.dry_run = source["dry_run"];
 	        this.message = source["message"];
@@ -130,6 +136,7 @@ export namespace actiontest {
 	    post_id: string;
 	    account_id: string;
 	    reaction_type: string;
+	    reaction_id: string;
 	    dry_run: boolean;
 	    actor_source: string;
 	
@@ -142,6 +149,7 @@ export namespace actiontest {
 	        this.post_id = source["post_id"];
 	        this.account_id = source["account_id"];
 	        this.reaction_type = source["reaction_type"];
+	        this.reaction_id = source["reaction_id"];
 	        this.dry_run = source["dry_run"];
 	        this.actor_source = source["actor_source"];
 	    }
@@ -154,8 +162,10 @@ export namespace actiontest {
 	    account_id: string;
 	    account_display_name: string;
 	    reaction_type: string;
+	    reaction_id: string;
 	    dry_run: boolean;
 	    message: string;
+	    error_code?: string;
 	    // Go type: time
 	    executed_at: any;
 	
@@ -172,8 +182,10 @@ export namespace actiontest {
 	        this.account_id = source["account_id"];
 	        this.account_display_name = source["account_display_name"];
 	        this.reaction_type = source["reaction_type"];
+	        this.reaction_id = source["reaction_id"];
 	        this.dry_run = source["dry_run"];
 	        this.message = source["message"];
+	        this.error_code = source["error_code"];
 	        this.executed_at = this.convertValues(source["executed_at"], null);
 	    }
 	

@@ -4,11 +4,19 @@ import type { ActionResponse, ActionLog, ActionRequest } from '../types/action'
 
 export const actionsService = {
   async likePost(reqData: ActionRequest): Promise<ActionResponse> {
-    // Payload đầy đủ — backend bây giờ nhận account_id + reaction_type thật
+    // doc_id KHÔNG được truyền — backend tự resolve từ graphqlDocID constant nội bộ
+    console.debug('[DocID-Bridge] Building LikePostRequest WITHOUT doc_id:', {
+      post_id: reqData.post_id,
+      account_id: reqData.account_id,
+      reaction_type: reqData.reaction_type,
+      reaction_id: reqData.reaction_id,
+      dry_run: reqData.dry_run
+    })
     const req = new actiontest.LikePostRequest({
       post_id: reqData.post_id,
       account_id: reqData.account_id,
       reaction_type: reqData.reaction_type,
+      reaction_id: reqData.reaction_id,
       dry_run: reqData.dry_run,
       actor_source: reqData.actor_source || 'manual_test'
     })
@@ -23,6 +31,7 @@ export const actionsService = {
         account_id: resp.account_id,
         account_display_name: resp.account_display_name,
         reaction_type: resp.reaction_type,
+        reaction_id: resp.reaction_id,
         dry_run: resp.dry_run,
         message: resp.message,
         executed_at: resp.executed_at as unknown as string
@@ -35,6 +44,7 @@ export const actionsService = {
         post_id: reqData.post_id,
         account_id: reqData.account_id,
         reaction_type: reqData.reaction_type,
+        reaction_id: reqData.reaction_id,
         dry_run: reqData.dry_run,
         message: 'Lỗi kết nối backend: ' + (e?.message || e?.toString() || 'Unknown error'),
         executed_at: new Date().toISOString()
@@ -52,6 +62,7 @@ export const actionsService = {
         account_display_name: l.account_display_name,
         post_id: l.post_id,
         reaction_type: l.reaction_type,
+        reaction_id: l.reaction_id,
         status: l.status,
         dry_run: l.dry_run,
         message: l.message,
