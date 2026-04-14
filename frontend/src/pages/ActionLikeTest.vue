@@ -61,7 +61,7 @@ onMounted(() => {
 <template>
   <div class="test-page">
     <div class="page-header">
-      <h1 class="page-title">Thử nghiệm cảm xúc</h1>
+      <h1 class="page-title">Tương tác bài viết</h1>
       <p class="page-desc">Giả lập và kiểm tra hành vi thả cảm xúc lên bài viết trong môi trường an toàn.</p>
     </div>
 

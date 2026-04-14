@@ -9,13 +9,8 @@ const navigate = inject('navigate') as (route: string) => void
 const navItems = [
   { id: 'overview', label: 'Tổng quan', icon: icons.grid },
   { id: 'tasks', label: 'Công việc quét', icon: icons.repeat },
-  { id: 'profiles', label: 'Hồ sơ', icon: icons.users },
-  { id: 'posts', label: 'Bài viết', icon: icons.fileText },
-  { id: 'media', label: 'Phương tiện', icon: icons.image },
   { id: 'accounts', label: 'Tài khoản', icon: icons.users },
-  { id: 'logs', label: 'Nhật ký', icon: icons.clock },
-  { id: 'integrations', label: 'Tích hợp', icon: icons.plug },
-  { id: 'action-like-test', label: 'Thử nghiệm cảm xúc', icon: icons.checkBadge },
+  { id: 'action-like-test', label: 'Tương tác bài viết', icon: icons.thumbsUp },
   { id: 'settings', label: 'Cài đặt', icon: icons.settings },
 ]
 </script>
