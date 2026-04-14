@@ -7,6 +7,7 @@ import (
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
+	"github.com/yourname/tool-facebook/internal/actiontest"
 )
 
 //go:embed all:frontend/dist
@@ -14,6 +15,8 @@ var assets embed.FS
 
 func main() {
 	app := NewApp()
+	sessionHandler := actiontest.NewSessionHandler()
+	actionHandler := actiontest.NewActionHandler(sessionHandler)
 
 	err := wails.Run(&options.App{
 		Title:  "Tool Facebook",
@@ -26,6 +29,8 @@ func main() {
 		OnStartup:        app.startup,
 		Bind: []interface{}{
 			app,
+			sessionHandler,
+			actionHandler,
 		},
 	})
 

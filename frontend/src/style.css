@@ -1,7 +1,31 @@
 :root {
-  font-family: Inter, system-ui, Arial, sans-serif;
-  color: #f3f4f6;
-  background: #111827;
+  /* Colors */
+  --c-primary: #0f62fe; /* Facebook Blue tint */
+  --c-primary-hover: #0353e9;
+  --c-bg: #f5f6f8;
+  --c-sidebar: #fbfbfd;
+  --c-surface: #ffffff;
+  
+  --c-text-main: #1f2937;
+  --c-text-title: #111827;
+  --c-text-muted: #6b7280;
+  
+  --c-border: #e5e7eb;
+  --c-border-light: #f3f4f6;
+
+  /* Status Colors */
+  --c-success: #10b981;
+  --c-danger: #ef4444;
+  --c-warning: #f59e0b;
+  --c-info: #0f62fe;
+  
+  /* Typos & Spacing */
+  --font-main: Inter, system-ui, Arial, sans-serif;
+  --radius-sm: 6px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --shadow-sm: 0 1px 2px rgba(0,0,0,0.05);
+  --shadow-md: 0 4px 6px -1px rgba(0,0,0,0.05), 0 2px 4px -1px rgba(0,0,0,0.03);
 }
 
 * {
@@ -10,76 +34,36 @@
 
 body {
   margin: 0;
-  min-height: 100vh;
-  background: linear-gradient(180deg, #0f172a 0%, #111827 100%);
+  padding: 0;
+  font-family: var(--font-main);
+  background: var(--c-bg);
+  color: var(--c-text-main);
+  -webkit-font-smoothing: antialiased;
 }
 
-.app-shell {
-  min-height: 100vh;
-  display: grid;
-  place-items: center;
-  padding: 24px;
-}
+/* Utilities */
+.text-primary { color: var(--c-primary); }
+.text-danger { color: var(--c-danger); }
 
-.card {
-  width: min(720px, 100%);
-  background: rgba(31, 41, 55, 0.92);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 20px;
-  padding: 32px;
-  box-shadow: 0 16px 60px rgba(0, 0, 0, 0.35);
-}
+.bg-gradient-1 { background: linear-gradient(90deg, #1e3a8a, #3b82f6); }
+.bg-gradient-2 { background: linear-gradient(90deg, #1e40af, #60a5fa); }
+.bg-gradient-3 { background: linear-gradient(90deg, #374151, #9ca3af); }
+.bg-gradient-4 { background: linear-gradient(90deg, #ea580c, #fb923c); }
+.bg-gradient-5 { background: linear-gradient(90deg, #0284c7, #38bdf8); }
+.bg-gradient-6 { background: linear-gradient(90deg, #0f766e, #2dd4bf); }
 
-h1 {
-  margin: 0 0 8px;
-  font-size: 40px;
+/* Global Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
 }
-
-.subtitle {
-  margin: 0 0 24px;
-  color: #cbd5e1;
+::-webkit-scrollbar-track {
+  background: transparent;
 }
-
-.controls-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 16px;
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 4px;
 }
-
-select,
-input {
-  border: 1px solid #374151;
-  border-radius: 12px;
-  padding: 14px 16px;
-  background: #0f172a;
-  color: white;
-}
-
-.form-row {
-  display: flex;
-  gap: 12px;
-}
-
-.form-row input {
-  flex: 1;
-}
-
-button {
-  border: 0;
-  border-radius: 12px;
-  padding: 14px 18px;
-  background: #2563eb;
-  color: white;
-  cursor: pointer;
-  font-weight: 600;
-}
-
-button:hover {
-  background: #1d4ed8;
-}
-
-.result {
-  margin-top: 20px;
-  color: #93c5fd;
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
 }
