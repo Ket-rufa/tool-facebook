@@ -43,6 +43,23 @@ func actorIDFromCookie(cookie string) string {
 	return ""
 }
 
+// extractDtsgFromError trích xuất dtsgToken từ phản hồi lỗi 1357004 của Facebook
+// Facebook “tặng” token hợp lệ trong body lỗi, dùng cho lần request tiếp theo
+func extractDtsgFromError(body string) string {
+	re := regexp.MustCompile(`"dtsgToken"\s*:\s*"([^"]+)"`)
+	m := re.FindStringSubmatch(body)
+	if len(m) > 1 {
+		token := m[1] // GIỮ NGUYÊN toàn bộ, kể cả :3:timestamp
+		display := token
+		if len(display) > 20 {
+			display = display[:20]
+		}
+		fmt.Printf("[INFO] Trích xuất dtsgToken từ lỗi Facebook: %s\n", display)
+		return token
+	}
+	return ""
+}
+
 // SessionData chứa các thông số phiên làm việc lấy từ trang chủ
 type SessionData struct {
 	LSD   string
@@ -696,7 +713,6 @@ func (h *ActionHandler) CreatePost(req CreatePostRequest) CreatePostResponse {
 	}
 
 	// ── Real Run ────────────────────────────────────────────────────────
-	docID := "26695477506728717"
 
 	// Lấy thông tin fb_dtsg và Cookie từ fbdata store đã inject
 	if h.fbDataStore == nil {
@@ -743,185 +759,266 @@ func (h *ActionHandler) CreatePost(req CreatePostRequest) CreatePostResponse {
 		return resp
 	}
 
-	// Delay chống rate limit
+	// Delay chống Rate Limit
 	sleepMs := 3000 + rand.Intn(5001)
 	fmt.Printf("[DELAY] Nghỉ %dms trước khi đăng bài...\n", sleepMs)
 	time.Sleep(time.Duration(sleepMs) * time.Millisecond)
 
-	// Tự động lấy LSD và các thông số phiên (__rev, __hsi, __spin...) từ trang chủ
-	fmt.Printf("[INFO] Đang đồng bộ hóa phiên làm việc cho tài khoản %s...\n", displayName)
-	sessionData, err := fetchSessionData(fbInfo.Info.Cookie)
-	if err != nil {
-		fmt.Printf("[WARN] Không đồng bộ dữ liệu tự động được: %v. Sẽ thử dùng dữ liệu cũ.\n", err)
+	// ── Two-Step DTSG Strategy ──────────────────────────────────────────────
+	// Facebook trả về token hợp lệ trong lỗi 1357004 → học rồi thử lại ngay
+
+	docID := "26695477506728717"
+
+	// Helper: xây dựng variables JSON CHÍNH XÁC theo browser (captured từ F12)
+	buildVariables := func(_ string) string {
+		rawToken := generateToken()
+		idempotenceToken := fmt.Sprintf("%s_FEED", rawToken)
+		composerSessionID := rawToken // Cùng UUID, không có _FEED
+		return fmt.Sprintf(`{`+
+			`"input":{`+
+			`"composer_entry_point":"inline_composer",`+
+			`"composer_source_surface":"timeline",`+
+			`"idempotence_token":%s,`+
+			`"source":"WWW",`+
+			`"attachments":[],`+
+			`"audience":{"privacy":{"allow":[],"base_state":"FRIENDS","deny":[],"tag_expansion_state":"UNSPECIFIED"}},`+
+			`"message":{"ranges":[],"text":%s},`+
+			`"with_tags_ids":null,`+
+			`"inline_activities":[],`+
+			`"text_format_preset_id":"0",`+
+			`"publishing_flow":{"supported_flows":["ASYNC_SILENT","ASYNC_NOTIF","FALLBACK"]},`+
+			`"logging":{"composer_session_id":%s},`+
+			`"navigation_data":{"attribution_id_v2":"ProfileCometTimelineListViewRoot.react,comet.profile.timeline.list,via_cold_start,1776157041276,201193,190055527696468,,"},`+
+			`"tracking":[null],`+
+			`"event_share_metadata":{"surface":"timeline"},`+
+			`"actor_id":%s,`+
+			`"client_mutation_id":"1"`+
+			`},`+
+			`"feedLocation":"TIMELINE",`+
+			`"feedbackSource":0,`+
+			`"focusCommentID":null,`+
+			`"gridMediaWidth":230,`+
+			`"groupID":null,`+
+			`"scale":1,`+
+			`"privacySelectorRenderLocation":"COMET_STREAM",`+
+			`"checkPhotosToReelsUpsellEligibility":true,`+
+			`"referringStoryRenderLocation":null,`+
+			`"renderLocation":"timeline",`+
+			`"useDefaultActor":false,`+
+			`"inviteShortLinkKey":null,`+
+			`"isFeed":false,`+
+			`"isFundraiser":false,`+
+			`"isFunFactPost":false,`+
+			`"isGroup":false,`+
+			`"isEvent":false,`+
+			`"isTimeline":true,`+
+			`"isSocialLearning":false,`+
+			`"isPageNewsFeed":false,`+
+			`"isProfileReviews":false,`+
+			`"isWorkSharedDraft":false,`+
+			`"canUserManageOffers":false,`+
+			`"__relay_internal__pv__CometUFIShareActionMigrationrelayprovider":true,`+
+			`"__relay_internal__pv__GHLShouldChangeSponsoredDataFieldNamerelayprovider":true,`+
+			`"__relay_internal__pv__GHLShouldChangeAdIdFieldNamerelayprovider":true,`+
+			`"__relay_internal__pv__CometUFI_dedicated_comment_routable_dialog_gkrelayprovider":true,`+
+			`"__relay_internal__pv__CometUFICommentAutoTranslationTyperelayprovider":"ORIGINAL",`+
+			`"__relay_internal__pv__CometUFICommentAvatarStickerAnimatedImagerelayprovider":false,`+
+			`"__relay_internal__pv__CometUFICommentActionLinksRewriteEnabledrelayprovider":false,`+
+			`"__relay_internal__pv__IsWorkUserrelayprovider":false,`+
+			`"__relay_internal__pv__CometUFIReactionsEnableShortNamerelayprovider":false,`+
+			`"__relay_internal__pv__CometUFISingleLineUFIrelayprovider":false,`+
+			`"__relay_internal__pv__CometFeedStory_enable_post_permalink_white_space_clickrelayprovider":false,`+
+			`"__relay_internal__pv__TestPilotShouldIncludeDemoAdUseCaserelayprovider":false,`+
+			`"__relay_internal__pv__FBReels_deprecate_short_form_video_context_gkrelayprovider":true,`+
+			`"__relay_internal__pv__FBReels_enable_view_dubbed_audio_type_gkrelayprovider":true,`+
+			`"__relay_internal__pv__CometImmersivePhotoCanUserDisable3DMotionrelayprovider":false,`+
+			`"__relay_internal__pv__WorkCometIsEmployeeGKProviderrelayprovider":false,`+
+			`"__relay_internal__pv__IsMergQAPollsrelayprovider":false,`+
+			`"__relay_internal__pv__FBReelsMediaFooter_comet_enable_reels_ads_gkrelayprovider":true,`+
+			`"__relay_internal__pv__FBReelsIFUTileContent_reelsIFUPlayOnHoverrelayprovider":true,`+
+			`"__relay_internal__pv__GroupsCometGYSJFeedItemHeightrelayprovider":206,`+
+			`"__relay_internal__pv__ShouldEnableBakedInTextStoriesrelayprovider":false,`+
+			`"__relay_internal__pv__StoriesShouldIncludeFbNotesrelayprovider":false,`+
+			`"__relay_internal__pv__groups_comet_use_glvrelayprovider":false,`+
+			`"__relay_internal__pv__GHLShouldChangeSponsoredAuctionDistanceFieldNamerelayprovider":true,`+
+			`"__relay_internal__pv__GHLShouldUseSponsoredAuctionLabelFieldNameV1relayprovider":true,`+
+			`"__relay_internal__pv__GHLShouldUseSponsoredAuctionLabelFieldNameV2relayprovider":false`+
+			`}`,
+			jsonStr(idempotenceToken), jsonStr(postText), jsonStr(composerSessionID), jsonStr(actorID))
+	}
+
+	// Lấy LSD token (cần thiết cho Comet GraphQL endpoint)
+	lsd := ""
+	sessionData, sdErr := fetchSessionData(fbInfo.Info.Cookie)
+	if sdErr == nil && sessionData.LSD != "" {
+		lsd = sessionData.LSD
+		fmt.Printf("[INFO] LSD token: %s\n", lsd)
 	} else {
-		fmt.Printf("[INFO] Đã lấy được LSD: %s | Rev: %s\n", sessionData.LSD, sessionData.Rev)
-		if sessionData.DTSG != "" {
-			fbInfo.Info.FbDtsg = sessionData.DTSG
+		fmt.Printf("[WARN] Không lấy được LSD: %v\n", sdErr)
+	}
+
+	// Helper: thực hiện một lần POST lên GraphQL
+	doGraphQLPost := func(fbDtsg string) (int, string, error) {
+		vars := buildVariables(fbDtsg)
+		fd := url.Values{}
+		fd.Set("fb_dtsg", fbDtsg) // Gửi FULL token (kể cả :3:timestamp)
+		// Jazoest tính từ phần token trước dấu ":" đầu tiên
+		jazoestBase := fbDtsg
+		if idx := strings.Index(jazoestBase, ":"); idx > 0 {
+			jazoestBase = jazoestBase[:idx]
 		}
-	}
+		fd.Set("jazoest", calcJazoest(jazoestBase))
+		fd.Set("lsd", lsd)
+		fd.Set("doc_id", docID)
+		fd.Set("variables", vars)
 
-	// Tạo idempotence token và composer_session_id ngẫu nhiên
-	lsd := sessionData.LSD // Dùng gán cho Header bên dưới
+		req, err := http.NewRequest("POST", "https://www.facebook.com/api/graphql/", strings.NewReader(fd.Encode()))
+		if err != nil {
+			return 0, "", err
+		}
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Header.Set("Cookie", fbInfo.Info.Cookie)
+		req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+		req.Header.Set("Origin", "https://www.facebook.com")
+		req.Header.Set("Referer", "https://www.facebook.com/")
+		req.Header.Set("Accept", "*/*")
+		req.Header.Set("X-FB-Friendly-Name", "ComposerStoryCreateMutation")
+		req.Header.Set("X-FB-LSD", lsd)
+		req.Header.Set("X-ASBD-ID", "129477")
+		req.Header.Set("Sec-Fetch-Site", "same-origin")
+		req.Header.Set("Sec-Fetch-Mode", "cors")
+		req.Header.Set("Sec-Fetch-Dest", "empty")
 
-	// Chuẩn hóa fb_dtsg: chỉ lấy phần token trước dấu ":" đầu tiên
-	// Format trong file: "NAfxxx:47:1776071068" → chỉ dùng "NAfxxx"
-	fbDtsg := fbInfo.Info.FbDtsg
-	if idx := strings.Index(fbDtsg, ":"); idx > 0 {
-		fbDtsg = fbDtsg[:idx]
-		fmt.Printf("[INFO] fb_dtsg đã chuẩn hóa (bỏ :version:ts): %s\n", fbDtsg)
-	}
-
-	rawToken := generateToken()
-	idempotenceToken := fmt.Sprintf("%s_FEED", rawToken)
-
-	// Bộ Variables chuẩn hóa tối thiểu
-	variables := fmt.Sprintf(`{
-		"input": {
-			"composer_entry_point": "inline_composer",
-			"composer_source_surface": "timeline",
-			"idempotence_token": "%s",
-			"client_mutation_id": "1",
-			"actor_id": "%s",
-			"source": "WWW",
-			"attachments": [],
-			"audience": {
-				"privacy": {
-					"allow": [],
-					"base_state": "FRIENDS",
-					"deny": [],
-					"tag_expansion_state": "UNSPECIFIED"
+		// Client với redirect handler để giữ nguyên headers qua redirect
+		cl := &http.Client{
+			Timeout: 30 * time.Second,
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				// Giữ lại Cookie và headers qua các lần redirect
+				if len(via) > 0 {
+					fmt.Printf("[DEBUG] Redirect: %s -> %s\n", via[len(via)-1].URL, req.URL)
+					req.Header.Set("Cookie", fbInfo.Info.Cookie)
+					req.Header.Set("User-Agent", via[0].Header.Get("User-Agent"))
 				}
+				if len(via) >= 3 {
+					return fmt.Errorf("too many redirects")
+				}
+				return nil
 			},
-			"message": {
-				"ranges": [],
-				"text": %s
-			},
-			"with_tags_ids": null,
-			"inline_activities": [],
-			"text_format_preset_id": "0",
-			"publishing_flow": {
-				"publishing_type": "NORMAL"
-			},
-			"navigation_data": "{\"last_nav_impression_id\":\"0\",\"navigation_history\":\"[]\"}"
-		},
-		"displayCommentsContextEnableComment": false,
-		"displayCommentsContextIsOnAndOffContextEnabled": false,
-		"displayCommentsFeedbackContext": null,
-		"feedLocation": "TIMELINE",
-		"feedbackSource": 0,
-		"focusCommentID": null,
-		"gridSettings": null,
-		"privacySelectorRenderLocation": "COMET_STREAM",
-		"renderLocation": "timeline",
-		"useDefaultActor": false,
-		"isFeed": true,
-		"isItem": false,
-		"isTimeline": true,
-		"isYoutubeCollection": false,
-		"scale": 1
-	}`, idempotenceToken, actorID, jsonStr(postText))
-
-	formData := url.Values{}
-	formData.Set("av", actorID)
-	formData.Set("__user", actorID)
-	formData.Set("__a", "1")
-	formData.Set("__req", "q")
-	formData.Set("__ccg", "EXCELLENT")
-	formData.Set("__rev", sessionData.Rev)
-	formData.Set("__s", "")
-	formData.Set("__hsi", sessionData.HSI)
-	formData.Set("__comet_req", "15")
-	formData.Set("fb_dtsg", fbDtsg)
-	formData.Set("jazoest", calcJazoest(fbDtsg))
-	formData.Set("lsd", sessionData.LSD)
-	formData.Set("__spin_r", sessionData.SpinR)
-	formData.Set("__spin_t", sessionData.SpinT)
-	formData.Set("server_timestamps", "true")
-	formData.Set("fb_api_caller_class", "RelayModern")
-	formData.Set("fb_api_req_friendly_name", "ComposerStoryCreateMutation")
-	formData.Set("doc_id", docID)
-	formData.Set("variables", variables)
-
-	// Debug: In ra form data và variables để kiểm tra
-	fmt.Printf("[DEBUG] Form Data gửi đi:\n  doc_id=%s\n  fb_dtsg=%s\n  jazoest=%s\n  lsd=%s\n  av=%s\n  rev=%s\n  hsi=%s\n",
-		docID, fbDtsg, calcJazoest(fbDtsg), sessionData.LSD, actorID, sessionData.Rev, sessionData.HSI)
-	varSnippet := variables
-	if len(varSnippet) > 300 {
-		varSnippet = varSnippet[:300]
+		}
+		httpResp, err := cl.Do(req)
+		if err != nil {
+			return 0, "", err
+		}
+		defer httpResp.Body.Close()
+		// Debug: log response headers
+		fmt.Printf("[DEBUG] Resp headers: Content-Type=%s, Content-Length=%s, Location=%s\n",
+			httpResp.Header.Get("Content-Type"),
+			httpResp.Header.Get("Content-Length"),
+			httpResp.Header.Get("Location"))
+		b, _ := io.ReadAll(httpResp.Body)
+		return httpResp.StatusCode, string(b), nil
 	}
-	fmt.Printf("[DEBUG] Variables (300 char đầu): %s\n", varSnippet)
 
-	reqBody := strings.NewReader(formData.Encode())
-	client := &http.Client{Timeout: 20 * time.Second}
-	reqUrl := "https://www.facebook.com/api/graphql/"
+	// ── Lần 1: Thử với fb_dtsg ĐẦY ĐỦ (bao gồm :3:timestamp) ────────────────────
+	// QUAN TRỌẠNG: KHÔNG cắt bỏ :version:ts vì nó là một phần của token!
+	currentDtsg := fbInfo.Info.FbDtsg
+	shortDtsg := currentDtsg
+	if len(shortDtsg) > 20 {
+		shortDtsg = shortDtsg[:20]
+	}
+	fmt.Printf("[INFO] Lần 1: Gửi với fb_dtsg=%s...\n", shortDtsg)
 
-	httpReq, err := http.NewRequest("POST", reqUrl, reqBody)
+	status1, body1, err := doGraphQLPost(currentDtsg)
 	if err != nil {
 		resp := CreatePostResponse{
 			Success: false, Status: StatusFailed,
 			Action: "create_post", AccountID: accountID, AccountDisplayName: displayName, PostText: postText,
-			DryRun: false, Message: "Lỗi tạo HTTP request: " + err.Error(),
+			DryRun: false, Message: "Lỗi HTTP lần 1: " + err.Error(), ExecutedAt: time.Now(),
+		}
+		AddLog(logFromPost(resp, resp.Message))
+		return resp
+	}
+
+	snippet1 := body1
+	if len(snippet1) > 300 {
+		snippet1 = snippet1[:300]
+	}
+	fmt.Printf("=== RESP Lần 1 (status=%d, len=%d) ===\n%s\n====================\n", status1, len(body1), snippet1)
+
+	// Empty body = silent rejection (thiếu LSD hoặc header khác)
+	if body1 == "" {
+		resp := CreatePostResponse{
+			Success: false, Status: StatusFailed,
+			Action: "create_post", AccountID: accountID, AccountDisplayName: displayName, PostText: postText,
+			DryRun: false, Message: fmt.Sprintf("Facebook trả về body trống (HTTP %d) - LSD: %s", status1, lsd),
 			ExecutedAt: time.Now(),
 		}
 		AddLog(logFromPost(resp, resp.Message))
 		return resp
 	}
 
-	httpReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	httpReq.Header.Set("Cookie", fbInfo.Info.Cookie)
-	httpReq.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
-	httpReq.Header.Set("Origin", "https://www.facebook.com")
-	httpReq.Header.Set("Referer", "https://www.facebook.com/")
-	httpReq.Header.Set("X-FB-Friendly-Name", "ComposerStoryCreateMutation")
-	httpReq.Header.Set("X-FB-LSD", lsd)
-	httpReq.Header.Set("X-ASBD-ID", "129477")
-	httpReq.Header.Set("Accept", "*/*")
-	httpReq.Header.Set("Sec-Fetch-Dest", "empty")
-	httpReq.Header.Set("Sec-Fetch-Mode", "cors")
-	httpReq.Header.Set("Sec-Fetch-Site", "same-origin")
-	httpReq.Header.Set("Priority", "u=1, i")
+	// Kiểm tra nếu lần 1 đã thành công (không có lỗi)
+	if !strings.Contains(body1, `"error":`) && !strings.Contains(body1, `"errors":[`) {
+		resp := CreatePostResponse{
+			Success: true, Status: StatusSuccess,
+			Action: "create_post", AccountID: accountID, AccountDisplayName: displayName, PostText: postText,
+			DryRun: false, Message: fmt.Sprintf("Đăng bài thành công lần 1 — Tài khoản: %s!", displayName),
+			ExecutedAt: time.Now(),
+		}
+		AddLog(logFromPost(resp, resp.Message))
+		return resp
+	}
 
-	httpResp, err := client.Do(httpReq)
+	// ── Lần 2: Học token từ lỗi rồi thử lại ────────────────────────────────
+	freshDtsg := extractDtsgFromError(body1)
+	if freshDtsg == "" {
+		resp := CreatePostResponse{
+			Success: false, Status: StatusFailed,
+			Action: "create_post", AccountID: accountID, AccountDisplayName: displayName, PostText: postText,
+			DryRun: false, Message: "Không trích xuất được dtsgToken từ lỗi. Body: " + snippet1,
+			ExecutedAt: time.Now(),
+		}
+		AddLog(logFromPost(resp, resp.Message))
+		return resp
+	}
+
+	fmt.Printf("[INFO] Lần 2: Thử lại với fresh dtsg=%s...\n", freshDtsg[:min(20, len(freshDtsg))])
+	time.Sleep(1 * time.Second) // Nghỉ 1 giây giữa 2 lần
+
+	_, body2, err := doGraphQLPost(freshDtsg)
 	if err != nil {
 		resp := CreatePostResponse{
 			Success: false, Status: StatusFailed,
 			Action: "create_post", AccountID: accountID, AccountDisplayName: displayName, PostText: postText,
-			DryRun: false, Message: "Lỗi HTTP: " + err.Error(),
-			ExecutedAt: time.Now(),
+			DryRun: false, Message: "Lỗi HTTP lần 2: " + err.Error(), ExecutedAt: time.Now(),
 		}
 		AddLog(logFromPost(resp, resp.Message))
 		return resp
 	}
-	defer httpResp.Body.Close()
 
-	bodyBytes, _ := io.ReadAll(httpResp.Body)
-	bodyStr := string(bodyBytes)
-	fmt.Printf("=== GRAPHQL RAW RESP (CreatePost) ===\n%s\n====================\n", bodyStr)
+	snippet2 := body2
+	if len(snippet2) > 400 {
+		snippet2 = snippet2[:400]
+	}
+	fmt.Printf("=== RESP Lần 2 ===\n%s\n====================\n", snippet2)
 
-	// Kiểm tra lỗi (Catch cả errors:[] và error: code)
-	if strings.Contains(bodyStr, "\"errors\":[{") || strings.Contains(bodyStr, "Exception") || strings.Contains(bodyStr, "\"error\":") {
-		snippet := bodyStr
-		if len(snippet) > 120 {
-			snippet = snippet[:120] + "..."
-		}
+	if strings.Contains(body2, `"error":`) || strings.Contains(body2, `"errors":[`) {
 		resp := CreatePostResponse{
 			Success: false, Status: StatusFailed,
 			Action: "create_post", AccountID: accountID, AccountDisplayName: displayName, PostText: postText,
-			DryRun: false, Message: "FB GraphQL Error: " + snippet,
-			ExecutedAt: time.Now(),
+			DryRun: false, Message: "Vẫn lỗi ở lần 2: " + snippet2, ExecutedAt: time.Now(),
 		}
 		AddLog(logFromPost(resp, resp.Message))
 		return resp
 	}
 
-	// Thành công — FB trả về story ID
 	resp := CreatePostResponse{
 		Success: true, Status: StatusSuccess,
 		Action: "create_post", AccountID: accountID, AccountDisplayName: displayName, PostText: postText,
-		DryRun: false,
-		Message: fmt.Sprintf("Real Run: Đã đăng bài thành công bằng tài khoản %s!", displayName),
+		DryRun: false, Message: fmt.Sprintf("Đăng bài thành công (Two-Step DTSG) — Tài khoản: %s!", displayName),
 		ExecutedAt: time.Now(),
 	}
 	AddLog(logFromPost(resp, resp.Message))
 	return resp
 }
+
