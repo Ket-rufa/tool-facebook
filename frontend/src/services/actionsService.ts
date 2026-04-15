@@ -137,6 +137,8 @@ export const actionsService = {
         account_id: l.account_id,
         account_display_name: l.account_display_name,
         post_id: l.post_id,
+        comment_text: l.comment_text,
+        post_text: l.post_text,
         reaction_type: l.reaction_type,
         reaction_id: l.reaction_id,
         status: l.status,

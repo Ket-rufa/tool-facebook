@@ -1,11 +1,16 @@
 package actiontest
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"math/rand"
+	"net/http"
+	"net/url"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -221,6 +226,7 @@ func calcJazoest(dtsg string) string {
 type ActionHandler struct {
 	sessionHandler *SessionHandler
 	accountStore   accounts.Store
+	fbDataStore    fbdata.Store
 	configStore    *ConfigStore
 }
 
@@ -229,6 +235,7 @@ func NewActionHandler(sessionHandler *SessionHandler) *ActionHandler {
 	return &ActionHandler{
 		sessionHandler: sessionHandler,
 		accountStore:   nil,
+		fbDataStore:    nil,
 		configStore:    nil,
 	}
 }
@@ -238,15 +245,17 @@ func NewActionHandlerWithStore(sessionHandler *SessionHandler, store accounts.St
 	return &ActionHandler{
 		sessionHandler: sessionHandler,
 		accountStore:   store,
+		fbDataStore:    fbStore,
 		configStore:    nil,
 	}
 }
 
 // NewActionHandlerWithStoreAndConfig tao handler co account store va config store.
-func NewActionHandlerWithStoreAndConfig(sessionHandler *SessionHandler, store accounts.Store, cfg *ConfigStore) *ActionHandler {
+func NewActionHandlerWithStoreAndConfig(sessionHandler *SessionHandler, store accounts.Store, fbStore fbdata.Store, cfg *ConfigStore) *ActionHandler {
 	return &ActionHandler{
 		sessionHandler: sessionHandler,
 		accountStore:   store,
+		fbDataStore:    fbStore,
 		configStore:    cfg,
 	}
 }

@@ -45,7 +45,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Khong the khoi tao action config store: %v", err)
 	}
-	actionHandler := actiontest.NewActionHandlerWithStoreAndConfig(sessionHandler, store, configStore)
+	actionHandler := actiontest.NewActionHandlerWithStoreAndConfig(sessionHandler, store, fbStore, configStore)
 
 	err = wails.Run(&options.App{
 		Title:  "Tool Facebook",

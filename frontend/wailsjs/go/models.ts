@@ -87,8 +87,10 @@ export namespace actiontest {
 	    account_id: string;
 	    account_display_name: string;
 	    post_id: string;
-	    reaction_type: string;
-	    reaction_id: string;
+	    comment_text?: string;
+	    post_text?: string;
+	    reaction_type?: string;
+	    reaction_id?: string;
 	    status: string;
 	    dry_run: boolean;
 	    message: string;
@@ -106,6 +108,8 @@ export namespace actiontest {
 	        this.account_id = source["account_id"];
 	        this.account_display_name = source["account_display_name"];
 	        this.post_id = source["post_id"];
+	        this.comment_text = source["comment_text"];
+	        this.post_text = source["post_text"];
 	        this.reaction_type = source["reaction_type"];
 	        this.reaction_id = source["reaction_id"];
 	        this.status = source["status"];

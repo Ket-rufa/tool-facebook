@@ -125,8 +125,10 @@ type ActionLog struct {
 	AccountID          string    `json:"account_id"`
 	AccountDisplayName string    `json:"account_display_name"`
 	PostID             string    `json:"post_id"`
-	ReactionType       string    `json:"reaction_type"`
-	ReactionID         string    `json:"reaction_id"`
+	CommentText        string    `json:"comment_text,omitempty"`
+	PostText           string    `json:"post_text,omitempty"`
+	ReactionType       string    `json:"reaction_type,omitempty"`
+	ReactionID         string    `json:"reaction_id,omitempty"`
 	Status             string    `json:"status"`
 	DryRun             bool      `json:"dry_run"`
 	Message            string    `json:"message"`
