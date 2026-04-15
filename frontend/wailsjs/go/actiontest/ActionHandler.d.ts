@@ -8,8 +8,12 @@ export function CreatePost(arg1:actiontest.CreatePostRequest):Promise<actiontest
 
 export function GetActionLogs():Promise<Array<actiontest.ActionLog>>;
 
+export function GetCreatePostDocID():Promise<string>;
+
 export function GetReactDocID():Promise<string>;
 
 export function LikePost(arg1:actiontest.LikePostRequest):Promise<actiontest.LikePostResponse>;
+
+export function UpdateCreatePostDocID(arg1:string):Promise<string>;
 
 export function UpdateReactDocID(arg1:string):Promise<string>;

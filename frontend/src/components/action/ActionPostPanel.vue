@@ -3,7 +3,14 @@ import { ref, computed, watch, onMounted } from 'vue'
 import type { CreatePostRequest } from '../../types/action'
 import { icons } from '../../utils/icons'
 import { ListAccounts } from '../../../wailsjs/go/accounts/AccountService'
+import { PickMediaFiles } from '../../../wailsjs/go/main/App'
+import { GetCreatePostDocID, UpdateCreatePostDocID } from '../../../wailsjs/go/actiontest/ActionHandler'
 import type { accounts } from '../../../wailsjs/go/models'
+
+type LocalMediaFile = {
+  path: string
+  name: string
+}
 
 const props = defineProps<{
   isLoading: boolean
@@ -14,16 +21,24 @@ const emit = defineEmits<{
   (e: 'updateAccount', accountId: string): void
 }>()
 
-// ── State ─────────────────────────────────────────────────────────────
+// State
 const accountsList = ref<accounts.AccountProfile[]>([])
 const accountsLoading = ref(false)
-
 const selectedAccounts = ref<string[]>([])
 const postList = ref('')
+const mediaInput = ref('')
+const mediaPlaceholders = ref<string[]>([])
+const mediaFiles = ref<LocalMediaFile[]>([])
 const dryRun = ref(true)
 const validationError = ref('')
 
-// ── Load accounts thật từ backend ─────────────────────────────────────
+// Doc ID
+const createPostDocID = ref('')
+const docIDInput = ref('')
+const docIDSaving = ref(false)
+const docIDMessage = ref('')
+
+// Load accounts
 async function loadAccounts() {
   accountsLoading.value = true
   try {
@@ -35,14 +50,44 @@ async function loadAccounts() {
       else selectedAccounts.value = [accountsList.value[0].id]
     }
   } catch (e) {
-    console.error('Không thể tải danh sách tài khoản:', e)
+    console.error('Loi tai tai khoan:', e)
     accountsList.value = []
   } finally {
     accountsLoading.value = false
   }
 }
 
-onMounted(() => loadAccounts())
+// Load doc_id
+async function loadCreatePostDocID() {
+  try {
+    const id = await GetCreatePostDocID()
+    createPostDocID.value = id || ''
+    docIDInput.value = id || ''
+  } catch (e) {
+    console.error('Loi tai doc_id:', e)
+  }
+}
+
+// Save doc_id
+async function saveCreatePostDocID() {
+  docIDSaving.value = true
+  docIDMessage.value = ''
+  try {
+    const saved = await UpdateCreatePostDocID(docIDInput.value.trim())
+    createPostDocID.value = saved
+    docIDMessage.value = saved ? 'Da luu doc_id: ' + saved : 'Da xoa doc_id - dung mac dinh'
+  } catch (e: any) {
+    docIDMessage.value = 'Loi: ' + (e?.message || String(e))
+  } finally {
+    docIDSaving.value = false
+    setTimeout(() => { docIDMessage.value = '' }, 4000)
+  }
+}
+
+onMounted(() => {
+  loadAccounts()
+  loadCreatePostDocID()
+})
 
 watch(selectedAccounts, (newVal) => {
   if (newVal && newVal.length > 0) {
@@ -50,31 +95,54 @@ watch(selectedAccounts, (newVal) => {
   }
 }, { deep: true, immediate: true })
 
-// ── Computed ──────────────────────────────────────────────────────────
-const hasAccounts = computed(() => accountsList.value.length > 0)
-
-const isAccountSelectable = (acc: accounts.AccountProfile) => {
-  return acc.sessionStatus === 'active' || acc.sessionStatus === 'unchecked'
-}
-
-const parsedPosts = computed(() => {
-  return postList.value
+// Media
+const parsedMediaPlaceholders = computed(() => {
+  return mediaInput.value
     .split('\n')
-    .map(c => c.trim())
-    .filter(c => c.length > 0)
+    .map(l => l.trim())
+    .filter(l => l.startsWith('{') && l.endsWith('}'))
 })
 
+async function openMediaPicker() {
+  try {
+    const files: string[] = await PickMediaFiles()
+    if (!files || files.length === 0) return
+    const newFiles = files.map(p => {
+      const parts = p.replace(/\\/g, '/').split('/')
+      return { path: p, name: parts[parts.length - 1] }
+    })
+    mediaFiles.value = [...mediaFiles.value, ...newFiles]
+  } catch (e) {
+    console.error('Loi picker:', e)
+  }
+}
+
+function removeMedia(index: number) {
+  mediaFiles.value.splice(index, 1)
+}
+
+// Computed
+const hasAccounts = computed(() => accountsList.value.length > 0)
+const isAccountSelectable = (acc: accounts.AccountProfile) =>
+  acc.sessionStatus === 'active' || acc.sessionStatus === 'unchecked'
+
+const parsedPosts = computed(() =>
+  postList.value.split('\n').map(c => c.trim()).filter(c => c.length > 0)
+)
+
 const isReady = computed(() => {
-  return selectedAccounts.value.length > 0 && parsedPosts.value.length > 0
+  const hasAccount = selectedAccounts.value.length > 0
+  const hasContent = parsedPosts.value.length > 0 || mediaFiles.value.length > 0
+  return hasAccount && hasContent
 })
 
 const getAccountName = computed(() => {
-  if (selectedAccounts.value.length === 0) return 'Chưa chọn'
+  if (selectedAccounts.value.length === 0) return 'Chua chon'
   if (selectedAccounts.value.length === 1) {
     const acc = accountsList.value.find(a => a.id === selectedAccounts.value[0])
-    return acc ? acc.displayName : 'Chưa chọn'
+    return acc ? acc.displayName : 'Chua chon'
   }
-  return `${selectedAccounts.value.length} tài khoản đã chọn`
+  return selectedAccounts.value.length + ' tai khoan da chon'
 })
 
 const sessionBadgeClass = (status: string) => {
@@ -89,36 +157,39 @@ const sessionBadgeClass = (status: string) => {
 
 const sessionStatusLabel = (status: string) => {
   const map: Record<string, string> = {
-    active: 'Hoạt động', expired: 'Hết hạn',
-    error: 'Lỗi', invalid: 'Không hợp lệ', unchecked: 'Chưa kiểm tra'
+    active: 'Hoat dong', expired: 'Het han',
+    error: 'Loi', invalid: 'Khong hop le', unchecked: 'Chua kiem tra'
   }
   return map[status] || status
 }
 
-// ── Submit ────────────────────────────────────────────────────────────
+// Submit
 const handleSubmit = () => {
   validationError.value = ''
-
   if (!hasAccounts.value) {
-    validationError.value = 'Chưa có tài khoản nào. Vui lòng thêm tài khoản ở màn "Tài khoản" trước.'
+    validationError.value = 'Chua co tai khoan nao. Vui long them tai khoan truoc.'
     return
   }
   if (selectedAccounts.value.length === 0) {
-    validationError.value = 'Vui lòng chọn ít nhất một tài khoản thực thi'
+    validationError.value = 'Vui long chon it nhat mot tai khoan.'
     return
   }
-  if (parsedPosts.value.length === 0) {
-    validationError.value = 'Vui lòng nhập ít nhất một nội dung bài viết'
+  if (parsedPosts.value.length === 0 && mediaFiles.value.length === 0) {
+    validationError.value = 'Vui long nhap noi dung hoac chon anh truoc khi dang.'
     return
   }
 
   const payloads: CreatePostRequest[] = selectedAccounts.value.map((id) => {
-    const randomIndex = Math.floor(Math.random() * parsedPosts.value.length)
-    const randomContent = parsedPosts.value[randomIndex]
-
+    let randomContent = ''
+    if (parsedPosts.value.length > 0) {
+      const idx = Math.floor(Math.random() * parsedPosts.value.length)
+      randomContent = parsedPosts.value[idx]
+    }
+    const mediaList = mediaFiles.value.map(f => f.path)
     return {
       account_id: id,
       post_text: randomContent,
+      image_paths: mediaList,
       dry_run: dryRun.value,
       actor_source: 'manual_test'
     }
@@ -130,41 +201,41 @@ const handleSubmit = () => {
 
 <template>
   <div class="test-form-wrapper">
-    
-    <!-- 1. Card Tài khoản -->
+
+    <!-- 1. Card Tai khoan -->
     <div class="card">
-      <h2 class="card-title">Tài khoản thực thi</h2>
-      
+      <h2 class="card-title">Tai khoan thuc thi</h2>
+
       <div v-if="accountsLoading" class="accounts-loading">
-        <span class="spinner-sm"></span> Đang tải danh sách tài khoản...
+        <span class="spinner-sm"></span> Dang tai danh sach tai khoan...
       </div>
-      
+
       <div v-else-if="!hasAccounts" class="empty-accounts">
         <span v-html="icons.users" class="ea-icon"></span>
-        <p>Chưa có tài khoản nào được gắn phiên.</p>
-        <p class="ea-hint">Vui lòng thêm tài khoản ở màn <strong>Tài khoản</strong></p>
+        <p>Chua co tai khoan nao duoc gan phien.</p>
+        <p class="ea-hint">Vui long them tai khoan o man <strong>Tai khoan</strong></p>
       </div>
-      
+
       <div v-else class="account-list">
-        <label 
-          v-for="acc in accountsList" 
-          :key="acc.id" 
-          class="account-item" 
+        <label
+          v-for="acc in accountsList"
+          :key="acc.id"
+          class="account-item"
           :class="{
             'is-selected': selectedAccounts.includes(acc.id),
             'is-disabled': !isAccountSelectable(acc)
           }"
         >
-          <input 
-            type="checkbox" :value="acc.id" v-model="selectedAccounts" 
-            :disabled="!isAccountSelectable(acc) || isLoading" 
-            class="sr-only" 
+          <input
+            type="checkbox" :value="acc.id" v-model="selectedAccounts"
+            :disabled="!isAccountSelectable(acc) || isLoading"
+            class="sr-only"
           />
           <img :src="`https://ui-avatars.com/api/?name=${encodeURIComponent(acc.displayName)}&background=eff6ff&color=0f62fe`" class="acc-avatar" alt="avatar"/>
           <div class="acc-info">
             <div class="acc-name">
               {{ acc.displayName }}
-              <span v-if="acc.isDefault" class="default-tag">Mặc định</span>
+              <span v-if="acc.isDefault" class="default-tag">Mac dinh</span>
             </div>
             <div class="acc-type">{{ acc.accountType }} · {{ acc.provider }}</div>
           </div>
@@ -176,36 +247,91 @@ const handleSubmit = () => {
       </div>
     </div>
 
-    <!-- 2. Card Cấu hình Bài viết -->
+    <!-- 2. Card Noi dung bai viet -->
     <div class="card">
-      <h2 class="card-title">Nội dung bài viết (Status)</h2>
-      
+      <h2 class="card-title">Noi dung bai viet (Status)</h2>
+
       <div class="form-group mt-2">
-        <p class="text-muted text-xs mb-2">Nhập mỗi Status trên 1 dòng. Tool sẽ tự động bốc ngẫu nhiên (random) 1 nội dung cho mỗi tài khoản.</p>
+        <p class="text-muted text-xs mb-2">Nhap moi Status tren 1 dong. Tool se boc ngau nhien 1 noi dung cho moi tai khoan.</p>
         <textarea
           v-model="postList"
           class="form-input"
           rows="5"
-          placeholder="Hôm nay trời đẹp quá!&#10;Mình vừa ra mắt sản phẩm mới.&#10;Trưa nay ăn gì nhỉ?"
+          placeholder="Hom nay troi dep qua!&#10;Minh vua ra mat san pham moi.&#10;Trua nay an gi nhi?"
           :disabled="isLoading"
         ></textarea>
         <div class="comment-stats" v-if="parsedPosts.length > 0">
-          Đã nhận diện <strong>{{ parsedPosts.length }}</strong> kịch bản nội dung khác nhau.
-        </div>
-      </div>
-      
-      <div class="form-group mt-4">
-        <label class="form-label text-muted">Đính kèm Hình ảnh / Video (Phát triển sau)</label>
-        <div class="upload-placeholder">
-           <span v-html="icons.image" class="inline-icon text-muted"></span> Tính năng up ảnh đang trong quá trình phát triển lõi Upload (MediaFBID).
+          Da nhan dien <strong>{{ parsedPosts.length }}</strong> kich ban noi dung khac nhau.
         </div>
       </div>
     </div>
 
-    <!-- 3. Card Chế độ -->
+    <!-- 3. Card Media -->
+    <div class="card">
+      <h2 class="card-title">Dinh kem Hinh anh / Video</h2>
+      <p class="text-muted text-xs mb-2">Chon anh/video de dang kem bai viet. Tool se upload va dinh kem tu dong.</p>
+
+      <div class="media-input-row">
+        <button
+          type="button"
+          class="btn btn-outline"
+          :disabled="isLoading"
+          @click="openMediaPicker"
+        >
+          <span v-html="icons.image" class="inline-icon"></span>
+          Chon anh/video tu may tinh
+        </button>
+      </div>
+
+      <div v-if="mediaFiles.length > 0" class="media-file-list mt-2">
+        <div v-for="(f, i) in mediaFiles" :key="i" class="media-file-item">
+          <span v-html="icons.image" class="inline-icon file-icon"></span>
+          <span class="file-name">{{ f.name }}</span>
+          <button type="button" class="btn-remove" @click="removeMedia(i)" :disabled="isLoading">
+            <span v-html="icons.x"></span>
+          </button>
+        </div>
+        <div class="comment-stats">Tong file: <strong>{{ mediaFiles.length }}</strong></div>
+      </div>
+    </div>
+
+    <!-- 4. Card CreatePost Doc ID -->
+    <div class="card docid-card">
+      <h2 class="card-title">⚙ CreatePost Doc ID</h2>
+      <p class="text-muted text-xs mb-2">
+        Neu gap loi 1357010 field_exception, Facebook da cap nhat schema.
+        Vao F12 - Network - ComposerStoryCreateMutation - Request Payload de lay doc_id moi.
+      </p>
+      <div class="docid-current" :class="createPostDocID ? 'docid-set' : 'docid-default'">
+        {{ createPostDocID ? 'Doc ID hien tai: ' + createPostDocID : 'Dang dung doc_id mac dinh (chua cau hinh)' }}
+      </div>
+      <div class="media-input-row mt-2">
+        <input
+          v-model="docIDInput"
+          type="text"
+          class="form-input"
+          placeholder="VD: 27581837698072404"
+          :disabled="isLoading || docIDSaving"
+          @keydown.enter.prevent="saveCreatePostDocID"
+        />
+        <button type="button" class="btn btn-outline" :disabled="isLoading || docIDSaving" @click="saveCreatePostDocID">
+          {{ docIDSaving ? 'Dang luu...' : 'Luu' }}
+        </button>
+        <button type="button" class="btn btn-outline btn-reset" title="Reset ve mac dinh"
+          :disabled="isLoading || docIDSaving"
+          @click="docIDInput = ''; saveCreatePostDocID()">
+          X
+        </button>
+      </div>
+      <div v-if="docIDMessage" class="docid-msg" :class="docIDMessage.startsWith('Loi') ? 'msg-error' : 'msg-ok'">
+        {{ docIDMessage }}
+      </div>
+    </div>
+
+    <!-- 5. Card Che do -->
     <div class="card">
       <div class="flex-heading">
-        <h2 class="card-title m-0">Chế độ chạy</h2>
+        <h2 class="card-title m-0">Che do chay</h2>
         <div class="segmented-control">
           <div class="segment-bg" :class="{ 'is-right': !dryRun }"></div>
           <button type="button" class="segment-btn" :class="{ 'active text-primary': dryRun, 'text-muted': !dryRun }" @click="dryRun = true" :disabled="isLoading">
@@ -217,21 +343,22 @@ const handleSubmit = () => {
         </div>
       </div>
       <div class="mode-info">
-        <p v-if="dryRun" class="text-muted"><span v-html="icons.info" class="inline-icon"></span> Mô phỏng hành động, không đăng thật lên Profile.</p>
-        <p v-else class="text-warning"><span v-html="icons.alertCircle" class="inline-icon"></span> Đăng thẳng lên tường Profile (yêu cầu GraphQL doc_id).</p>
+        <p v-if="dryRun" class="text-muted"><span v-html="icons.info" class="inline-icon"></span> Mo phong hanh dong, khong dang that len Profile.</p>
+        <p v-else class="text-warning"><span v-html="icons.alertCircle" class="inline-icon"></span> Dang thang len tuong Profile (yeu cau GraphQL doc_id).</p>
       </div>
     </div>
 
-    <!-- 4. Tóm tắt & Submit -->
+    <!-- 6. Tom tat & Submit -->
     <div class="card summary-card">
-      <h3 class="summary-title">Tóm tắt hành động</h3>
+      <h3 class="summary-title">Tom tat hanh dong</h3>
       <div class="summary-grid">
-        <div class="sum-row"><span>Tài khoản:</span> <strong>{{ getAccountName }}</strong></div>
-        <div class="sum-row"><span>Đăng vào:</span> <strong>Profile Cá Nhân</strong></div>
-        <div class="sum-row"><span>Nhật ký Status:</span> <strong>{{ parsedPosts.length }} câu</strong></div>
-        <div class="sum-row"><span>Chế độ:</span> <strong>{{ dryRun ? 'Dry Run' : 'Real Run' }}</strong></div>
+        <div class="sum-row"><span>Tai khoan:</span> <strong>{{ getAccountName }}</strong></div>
+        <div class="sum-row"><span>Dang vao:</span> <strong>Profile Ca Nhan</strong></div>
+        <div class="sum-row"><span>Noi dung:</span> <strong>{{ parsedPosts.length }} cau</strong></div>
+        <div class="sum-row"><span>Media:</span> <strong>{{ mediaFiles.length }} file</strong></div>
+        <div class="sum-row"><span>Che do:</span> <strong>{{ dryRun ? 'Dry Run' : 'Real Run' }}</strong></div>
       </div>
-      
+
       <div v-if="validationError" class="error-msg text-danger">{{ validationError }}</div>
 
       <div class="submit-area">
@@ -242,7 +369,7 @@ const handleSubmit = () => {
           class="btn btn-primary btn-lg w-full"
         >
           <span class="spinner" v-if="isLoading"></span>
-          {{ isLoading ? 'Đang gửi...' : 'Đăng Bài Hàng Loạt' }}
+          {{ isLoading ? 'Dang gui...' : 'Dang Bai Hang Loat' }}
         </button>
       </div>
     </div>
@@ -271,20 +398,40 @@ const handleSubmit = () => {
 .acc-status { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 12px; }
 .st-active { background: #d1fae5; color: #065f46; }
 .st-expired { background: #fee2e2; color: #991b1b; }
-.acc-check { color: var(--c-primary); display: flex;}
+.acc-check { color: var(--c-primary); display: flex; }
 .acc-check :deep(svg) { width: 20px; height: 20px; }
 
-/* Form Base */
+/* Form */
 .form-group { margin-bottom: 16px; }
 .form-label { display: block; font-size: 13px; font-weight: 600; color: var(--c-text-main); margin-bottom: 8px; }
-.form-input { width: 100%; padding: 10px 12px; border: 1px solid var(--c-border); border-radius: var(--radius-sm); font-size: 14px; color: var(--c-text-title); background: var(--c-bg); outline: none; font-family: monospace; transition: border-color 0.2s; resize: vertical; }
+.form-input { width: 100%; padding: 10px 12px; border: 1px solid var(--c-border); border-radius: var(--radius-sm); font-size: 14px; color: var(--c-text-title); background: var(--c-bg); outline: none; font-family: monospace; transition: border-color 0.2s; box-sizing: border-box; }
 .form-input:focus { border-color: var(--c-primary); background: var(--c-surface); }
+textarea.form-input { resize: vertical; }
+.mt-2 { margin-top: 10px; }
 .mt-4 { margin-top: 24px; }
 .mb-2 { margin-bottom: 8px; }
 .text-xs { font-size: 12px; }
 .comment-stats { margin-top: 8px; font-size: 12px; color: var(--c-primary); }
 
-.upload-placeholder { background: #f8fafc; border: 1px dashed var(--c-border-light); padding: 16px; border-radius: var(--radius-sm); text-align: center; font-size: 13px; color: var(--c-text-muted); }
+/* Media */
+.media-input-row { display: flex; gap: 8px; align-items: center; }
+.media-file-list { display: flex; flex-direction: column; gap: 6px; }
+.media-file-item { display: flex; align-items: center; gap: 8px; background: #f9fafb; border: 1px solid var(--c-border-light); border-radius: var(--radius-sm); padding: 6px 10px; }
+.file-name { flex: 1; font-size: 12px; font-family: monospace; color: var(--c-text-main); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.file-icon :deep(svg) { width: 14px; height: 14px; color: var(--c-primary); }
+.btn-remove { border: none; background: transparent; cursor: pointer; color: var(--c-text-muted); display: flex; padding: 2px; }
+.btn-remove :deep(svg) { width: 14px; height: 14px; }
+.btn-remove:hover { color: var(--c-danger); }
+
+/* Doc ID Card */
+.docid-card { border-left: 3px solid #f59e0b; }
+.docid-current { font-size: 12px; font-family: monospace; padding: 8px 12px; border-radius: var(--radius-sm); margin-bottom: 4px; }
+.docid-set { background: #eff6ff; color: var(--c-primary); border: 1px solid #bfdbfe; }
+.docid-default { background: #f9fafb; color: var(--c-text-muted); border: 1px dashed var(--c-border); }
+.docid-msg { margin-top: 8px; padding: 8px 12px; border-radius: var(--radius-sm); font-size: 12px; font-weight: 600; }
+.msg-ok { background: #ecfdf5; color: #065f46; border: 1px solid #a7f3d0; }
+.msg-error { background: #fee2e2; color: #991b1b; border: 1px solid #fca5a5; }
+.btn-reset { padding: 10px 12px !important; min-width: auto; }
 
 /* Segmented Control */
 .segmented-control { display: inline-flex; position: relative; background: var(--c-border-light); padding: 4px; border-radius: var(--radius-sm); width: max-content; }
@@ -292,12 +439,22 @@ const handleSubmit = () => {
 .segment-bg.is-right { transform: translateX(100%); }
 .segment-btn { position: relative; z-index: 1; padding: 6px 16px; min-width: 100px; border: none; background: transparent; font-size: 13px; font-weight: 600; cursor: pointer; border-radius: calc(var(--radius-sm) - 2px); }
 .text-primary { color: var(--c-primary); }
-.text-muted { color: var(--c-text-muted); font-weight: 500;}
+.text-muted { color: var(--c-text-muted); font-weight: 500; }
 .text-warning { color: var(--c-warning); font-weight: 600; }
 .text-title { color: var(--c-text-title); font-weight: 700; }
 .mode-info { margin-top: 16px; font-size: 13px; }
 .inline-icon { display: inline-flex; vertical-align: middle; margin-top: -2px; }
 .inline-icon :deep(svg) { width: 16px; height: 16px; }
+
+/* Buttons */
+.btn { padding: 10px 20px; font-size: 14px; font-weight: 600; border-radius: var(--radius-sm); cursor: pointer; border: none; display: inline-flex; align-items: center; justify-content: center; gap: 8px; transition: all 0.2s; }
+.btn-lg { padding: 14px 24px; font-size: 15px; }
+.w-full { width: 100%; }
+.btn:disabled { opacity: 0.6; cursor: not-allowed; }
+.btn-primary { background: var(--c-primary); color: white; }
+.btn-primary:not(:disabled):hover { background: var(--c-primary-hover); }
+.btn-outline { background: var(--c-surface); border: 1px solid var(--c-border); color: var(--c-text-main); }
+.btn-outline:not(:disabled):hover { border-color: var(--c-primary); color: var(--c-primary); }
 
 /* Summary */
 .summary-card { background: #fbfbfc; }
@@ -305,22 +462,17 @@ const handleSubmit = () => {
 .summary-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; background: white; padding: 16px; border: 1px solid var(--c-border-light); border-radius: var(--radius-sm); margin-bottom: 24px; }
 .sum-row { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
 .sum-row span { color: var(--c-text-muted); }
-.sum-row strong { color: var(--c-text-title); font-weight: 600;}
-
-.btn { padding: 10px 20px; font-size: 14px; font-weight: 600; border-radius: var(--radius-sm); cursor: pointer; border: none; display: inline-flex; align-items: center; justify-content: center; gap: 8px; transition: all 0.2s; }
-.btn-lg { padding: 14px 24px; font-size: 15px; }
-.w-full { width: 100%; }
-.btn:disabled { opacity: 0.6; cursor: not-allowed; }
-.btn-primary { background: var(--c-primary); color: white; }
-.btn-primary:not(:disabled):hover { background: var(--c-primary-hover); }
+.sum-row strong { color: var(--c-text-title); font-weight: 600; }
 
 /* Spinner */
 .spinner { display: inline-block; width: 16px; height: 16px; border: 2px solid rgba(255,255,255,0.3); border-radius: 50%; border-top-color: white; animation: spin 0.8s linear infinite; }
+.spinner-sm { display: inline-block; width: 14px; height: 14px; border: 2px solid #e5e7eb; border-top-color: var(--c-primary); border-radius: 50%; animation: spin 0.8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .error-msg { font-size: 13px; font-weight: 600; text-align: center; margin-bottom: 16px; }
 .text-danger { color: var(--c-danger); }
+.submit-area { margin-top: 8px; }
 
-/* Empty & loading accounts */
+/* Empty & loading */
 .accounts-loading { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--c-text-muted); padding: 12px 0; }
 .empty-accounts { display: flex; flex-direction: column; align-items: center; padding: 32px 16px; text-align: center; gap: 4px; }
 .empty-accounts p { margin: 0; font-size: 13px; color: var(--c-text-main); }
@@ -330,5 +482,4 @@ const handleSubmit = () => {
 .st-error { background: #fee2e2; color: #991b1b; }
 .st-unknown { background: #f3f4f6; color: #6b7280; }
 .default-tag { font-size: 9px; font-weight: 800; color: var(--c-primary); border: 1px solid #bfdbfe; padding: 1px 5px; border-radius: 4px; text-transform: uppercase; vertical-align: middle; margin-left: 4px; }
-.spinner-sm { display: inline-block; width: 14px; height: 14px; border: 2px solid #e5e7eb; border-top-color: var(--c-primary); border-radius: 50%; animation: spin 0.8s linear infinite; }
 </style>

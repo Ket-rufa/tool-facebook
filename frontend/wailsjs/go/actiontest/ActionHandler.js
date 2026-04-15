@@ -14,12 +14,20 @@ export function GetActionLogs() {
   return window['go']['actiontest']['ActionHandler']['GetActionLogs']();
 }
 
+export function GetCreatePostDocID() {
+  return window['go']['actiontest']['ActionHandler']['GetCreatePostDocID']();
+}
+
 export function GetReactDocID() {
   return window['go']['actiontest']['ActionHandler']['GetReactDocID']();
 }
 
 export function LikePost(arg1) {
   return window['go']['actiontest']['ActionHandler']['LikePost'](arg1);
+}
+
+export function UpdateCreatePostDocID(arg1) {
+  return window['go']['actiontest']['ActionHandler']['UpdateCreatePostDocID'](arg1);
 }
 
 export function UpdateReactDocID(arg1) {

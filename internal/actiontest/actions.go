@@ -1,15 +1,19 @@
 package actiontest
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log"
 	"math/rand"
+	"mime/multipart"
 	"net/http"
+	"net/textproto"
 	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -46,6 +50,498 @@ func actorIDFromCookie(cookie string) string {
 	return ""
 }
 
+func isAllDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, ch := range s {
+		if ch < '0' || ch > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func isLikelyLocalMediaInput(val string) bool {
+	v := strings.TrimSpace(strings.ToLower(val))
+	if v == "" {
+		return false
+	}
+	if strings.HasPrefix(v, "file://") {
+		return true
+	}
+	if strings.Contains(v, `\`) || strings.HasPrefix(v, "/") || strings.HasPrefix(v, "./") || strings.HasPrefix(v, "../") {
+		return true
+	}
+	if strings.Contains(v, "://") {
+		return false
+	}
+	exts := []string{".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".mp4", ".mov", ".avi", ".mkv", ".webm"}
+	for _, ext := range exts {
+		if strings.HasSuffix(v, ext) {
+			return true
+		}
+	}
+	return false
+}
+
+// extractPhotoIDsFromImagePaths chuyen danh sach image_paths thanh photo IDs dung cho GraphQL attachments.
+// Ho tro cac dinh dang:
+// - "122100411308738587"
+// - "media_fbid_122100411308738587"
+// - URL co query fbid=...
+func extractPhotoIDsFromImagePaths(imagePaths []string) ([]string, []string, []string) {
+	seen := make(map[string]struct{})
+	ids := make([]string, 0, len(imagePaths))
+	localInputs := make([]string, 0)
+	ignored := make([]string, 0)
+
+	for _, raw := range imagePaths {
+		val := strings.TrimSpace(raw)
+		if val == "" {
+			continue
+		}
+
+		candidate := ""
+		switch {
+		case strings.HasPrefix(val, "media_fbid_"):
+			candidate = strings.TrimPrefix(val, "media_fbid_")
+		case isAllDigits(val):
+			candidate = val
+		default:
+			if u, err := url.Parse(val); err == nil {
+				if fbid := strings.TrimSpace(u.Query().Get("fbid")); isAllDigits(fbid) {
+					candidate = fbid
+				}
+			}
+		}
+
+		if !isAllDigits(candidate) {
+			if isLikelyLocalMediaInput(val) {
+				localInputs = append(localInputs, val)
+				continue
+			}
+			ignored = append(ignored, val)
+			continue
+		}
+		if _, ok := seen[candidate]; ok {
+			continue
+		}
+		seen[candidate] = struct{}{}
+		ids = append(ids, candidate)
+	}
+
+	return ids, localInputs, ignored
+}
+
+func normalizeLocalMediaPath(input string) string {
+	path := strings.TrimSpace(input)
+	if path == "" {
+		return ""
+	}
+	if strings.HasPrefix(strings.ToLower(path), "file://") {
+		if u, err := url.Parse(path); err == nil {
+			unescapedPath, _ := url.PathUnescape(u.Path)
+			if len(unescapedPath) >= 3 && unescapedPath[0] == '/' && unescapedPath[2] == ':' {
+				unescapedPath = unescapedPath[1:]
+			}
+			if u.Host != "" && !strings.Contains(unescapedPath, ":") {
+				path = `\\` + u.Host + strings.ReplaceAll(unescapedPath, "/", `\`)
+			} else {
+				path = strings.ReplaceAll(unescapedPath, "/", string(os.PathSeparator))
+			}
+		}
+	}
+	return filepath.Clean(path)
+}
+
+func parseIDByPatterns(text string, patterns []string) string {
+	for _, p := range patterns {
+		re, err := regexp.Compile(p)
+		if err != nil {
+			continue
+		}
+		if m := re.FindStringSubmatch(text); len(m) > 1 && isAllDigits(m[1]) {
+			return m[1]
+		}
+	}
+	return ""
+}
+
+func parseUploadedPhotoIDFromBody(body string) (string, string) {
+	cleanBody := strings.TrimSpace(strings.TrimPrefix(body, "for (;;);"))
+	preferredPatterns := []struct {
+		key      string
+		patterns []string
+	}{
+		{key: "photo_id", patterns: []string{`"photo_id"\s*:\s*"?(\d{8,})"?`, `"photoID"\s*:\s*"?(\d{8,})"?`}},
+		{key: "legacy_fbid", patterns: []string{`"legacy_fbid"\s*:\s*"?(\d{8,})"?`}},
+		// metadata[].fbid thường đáng tin hơn image_id/media_id.
+		{key: "metadata_fbid", patterns: []string{`(?s)"metadata"\s*:\s*\[.*?"fbid"\s*:\s*"?(\d{8,})"?`}},
+		{key: "fbid", patterns: []string{`"fbid"\s*:\s*"?(\d{8,})"?`}},
+		{key: "image_id", patterns: []string{`"image_id"\s*:\s*"?(\d{8,})"?`}},
+		{key: "media_id", patterns: []string{`"media_id"\s*:\s*"?(\d{8,})"?`}},
+		{key: "id_122", patterns: []string{`\b(122\d{12,})\b`}},
+		{key: "id_generic", patterns: []string{`"id"\s*:\s*"?(\d{15,})"?`}},
+	}
+	variants := []string{
+		cleanBody,
+		strings.ReplaceAll(cleanBody, `\"`, `"`),
+	}
+	for _, variant := range variants {
+		for _, rule := range preferredPatterns {
+			if id := parseIDByPatterns(variant, rule.patterns); id != "" {
+				return id, rule.key
+			}
+		}
+	}
+	return "", ""
+}
+
+func parseUploadedFileIDFromBody(body string) string {
+	cleanBody := strings.TrimSpace(strings.TrimPrefix(body, "for (;;);"))
+	filePatterns := []string{
+		`"file_id"\s*:\s*"?(\d{8,})"?`,
+	}
+	variants := []string{
+		cleanBody,
+		strings.ReplaceAll(cleanBody, `\"`, `"`),
+	}
+	for _, variant := range variants {
+		if id := parseIDByPatterns(variant, filePatterns); id != "" {
+			return id
+		}
+	}
+	return ""
+}
+
+func summarizeUploadIDCandidates(body string) string {
+	cleanBody := strings.TrimSpace(strings.TrimPrefix(body, "for (;;);"))
+	variants := []string{
+		cleanBody,
+		strings.ReplaceAll(cleanBody, `\"`, `"`),
+	}
+	keys := []string{"photo_id", "photoID", "legacy_fbid", "image_id", "media_id", "file_id", "fbid"}
+	seen := make(map[string]struct{})
+	out := make([]string, 0, 8)
+	for _, variant := range variants {
+		for _, key := range keys {
+			pattern := fmt.Sprintf(`"?%s"?\s*:\s*"?(\d{8,})"?`, regexp.QuoteMeta(key))
+			re, err := regexp.Compile(pattern)
+			if err != nil {
+				continue
+			}
+			matches := re.FindAllStringSubmatch(variant, 5)
+			for _, m := range matches {
+				if len(m) < 2 || !isAllDigits(m[1]) {
+					continue
+				}
+				pair := fmt.Sprintf("%s=%s", key, m[1])
+				if _, ok := seen[pair]; ok {
+					continue
+				}
+				seen[pair] = struct{}{}
+				out = append(out, pair)
+			}
+		}
+	}
+	if len(out) == 0 {
+		return "none"
+	}
+	return strings.Join(out, ", ")
+}
+
+// detectMimeType trả về Content-Type đúng dựa theo extension file.
+// Cực kỳ quan trọng: nếu upload với Content-Type sai (application/octet-stream),
+// Facebook sẽ không nhận ra đây là ảnh và không trả về photo_id/fbid.
+func detectMimeType(filePath string) string {
+	ext := strings.ToLower(filepath.Ext(filePath))
+	switch ext {
+	case ".jpg", ".jpeg":
+		return "image/jpeg"
+	case ".png":
+		return "image/png"
+	case ".gif":
+		return "image/gif"
+	case ".webp":
+		return "image/webp"
+	case ".bmp":
+		return "image/bmp"
+	case ".mp4":
+		return "video/mp4"
+	case ".mov":
+		return "video/quicktime"
+	case ".avi":
+		return "video/x-msvideo"
+	case ".mkv":
+		return "video/x-matroska"
+	case ".webm":
+		return "video/webm"
+	default:
+		return "application/octet-stream"
+	}
+}
+
+func buildAttachmentsJSONWithKey(ids []string, key string) string {
+	if len(ids) == 0 || strings.TrimSpace(key) == "" {
+		return "[]"
+	}
+	attachments := make([]map[string]map[string]string, 0, len(ids))
+	for _, id := range ids {
+		trimmed := strings.TrimSpace(id)
+		if trimmed == "" {
+			continue
+		}
+		attachments = append(attachments, map[string]map[string]string{
+			key: {"id": trimmed},
+		})
+	}
+	if len(attachments) == 0 {
+		return "[]"
+	}
+	if b, err := json.Marshal(attachments); err == nil {
+		return string(b)
+	}
+	return "[]"
+}
+
+type attachmentVariant struct {
+	Name string
+	JSON string
+}
+
+func buildAttachmentVariants(photoIDs []string) []attachmentVariant {
+	if len(photoIDs) == 0 {
+		return []attachmentVariant{{Name: "none", JSON: "[]"}}
+	}
+	variants := []attachmentVariant{
+		{Name: "photo", JSON: buildAttachmentsJSONWithKey(photoIDs, "photo")},
+		{Name: "existing_photo", JSON: buildAttachmentsJSONWithKey(photoIDs, "existing_photo")},
+		{Name: "media", JSON: buildAttachmentsJSONWithKey(photoIDs, "media")},
+	}
+	out := make([]attachmentVariant, 0, len(variants))
+	seen := make(map[string]struct{})
+	for _, v := range variants {
+		if strings.TrimSpace(v.JSON) == "" || v.JSON == "[]" {
+			continue
+		}
+		if _, ok := seen[v.JSON]; ok {
+			continue
+		}
+		seen[v.JSON] = struct{}{}
+		out = append(out, v)
+	}
+	if len(out) == 0 {
+		return []attachmentVariant{{Name: "none", JSON: "[]"}}
+	}
+	return out
+}
+
+func hasGraphQLErrorCode(body string, code string) bool {
+	needle := `"code":` + strings.TrimSpace(code)
+	needleAlt := `"api_error_code":` + strings.TrimSpace(code)
+	return strings.Contains(body, needle) || strings.Contains(body, needleAlt)
+}
+
+func uploadOneLocalMedia(cookie, actorID, fbDtsg, lsd string, sd SessionData, localInput string, composerSessionID string) (string, error) {
+	localPath := normalizeLocalMediaPath(localInput)
+	if localPath == "" {
+		return "", fmt.Errorf("local media path is empty")
+	}
+	fileInfo, err := os.Stat(localPath)
+	if err != nil {
+		return "", fmt.Errorf("cannot access file '%s': %w", localPath, err)
+	}
+	if fileInfo.IsDir() {
+		return "", fmt.Errorf("'%s' is a directory, expected file", localPath)
+	}
+
+	type uploadStrategy struct {
+		endpoint  string
+		fileField string
+	}
+	strategies := []uploadStrategy{
+		{endpoint: "https://upload.facebook.com/ajax/react_composer/attachments/photo/upload", fileField: "farr"},
+		{endpoint: "https://www.facebook.com/ajax/react_composer/attachments/photo/upload", fileField: "farr"},
+		{endpoint: "https://upload.facebook.com/ajax/react_composer/attachments/photo/upload", fileField: "source"},
+		{endpoint: "https://upload.facebook.com/ajax/composerx/attachment/media/upload", fileField: "farr"},
+		{endpoint: "https://www.facebook.com/ajax/composerx/attachment/media/upload", fileField: "farr"},
+		{endpoint: "https://upload.facebook.com/ajax/composerx/attachment/media/upload", fileField: "source"},
+		{endpoint: "https://upload.facebook.com/ajax/browser/graphql_media_upload", fileField: "farr"}, // Modern comet endpoint
+		{endpoint: "https://www.facebook.com/ajax/browser/graphql_media_upload", fileField: "farr"},
+		{endpoint: "https://upload.facebook.com/ajax/mercury/upload.php", fileField: "upload_1024"},
+		{endpoint: "https://www.facebook.com/ajax/mercury/upload.php", fileField: "upload_1024"},
+	}
+
+	var lastErr error
+	for _, strategy := range strategies {
+		fmt.Printf("[INFO] Uploading local media via %s (field=%s): %s\n", strategy.endpoint, strategy.fileField, localPath)
+		file, err := os.Open(localPath)
+		if err != nil {
+			return "", fmt.Errorf("cannot open file '%s': %w", localPath, err)
+		}
+
+		var reqBody bytes.Buffer
+		writer := multipart.NewWriter(&reqBody)
+		_ = writer.WriteField("av", actorID)
+		_ = writer.WriteField("__user", actorID)
+		_ = writer.WriteField("__a", "1")
+		_ = writer.WriteField("__req", "2b")
+		_ = writer.WriteField("__comet_req", "15")
+		if strings.TrimSpace(composerSessionID) != "" {
+			_ = writer.WriteField("composer_session_id", strings.TrimSpace(composerSessionID))
+		}
+		
+		// BUG FIX: Essential CSRF bypass
+		_ = writer.WriteField("jazoest", generateJazoest(fbDtsg))
+		_ = writer.WriteField("lsd", lsd)
+
+		_ = writer.WriteField("fb_dtsg", fbDtsg)
+		_ = writer.WriteField("__ccg", "EXCELLENT")
+		if strings.TrimSpace(sd.HS) != "" {
+			_ = writer.WriteField("__hs", strings.TrimSpace(sd.HS))
+		}
+		if strings.TrimSpace(sd.S) != "" {
+			_ = writer.WriteField("__s", strings.TrimSpace(sd.S))
+		}
+		if strings.TrimSpace(sd.Dyn) != "" {
+			_ = writer.WriteField("__dyn", strings.TrimSpace(sd.Dyn))
+		}
+		if strings.TrimSpace(sd.CSR) != "" {
+			_ = writer.WriteField("__csr", strings.TrimSpace(sd.CSR))
+		}
+		if strings.TrimSpace(sd.Rev) != "" {
+			_ = writer.WriteField("__rev", strings.TrimSpace(sd.Rev))
+		}
+		if strings.TrimSpace(sd.HSI) != "" {
+			_ = writer.WriteField("__hsi", strings.TrimSpace(sd.HSI))
+		}
+		if strings.TrimSpace(sd.SpinR) != "" {
+			_ = writer.WriteField("__spin_r", strings.TrimSpace(sd.SpinR))
+		}
+		_ = writer.WriteField("__spin_b", "trunk")
+		if strings.TrimSpace(sd.SpinT) != "" {
+			_ = writer.WriteField("__spin_t", strings.TrimSpace(sd.SpinT))
+		}
+		_ = writer.WriteField("fb_dtsg", fbDtsg)
+		_ = writer.WriteField("jazoest", calcJazoest(fbDtsg))
+		if strings.TrimSpace(lsd) != "" {
+			_ = writer.WriteField("lsd", strings.TrimSpace(lsd))
+		}
+		_ = writer.WriteField("profile_id", actorID)
+		_ = writer.WriteField("target_id", actorID)
+		_ = writer.WriteField("upload_source", "composer")
+		if strings.TrimSpace(composerSessionID) != "" {
+			_ = writer.WriteField("composer_session_id", strings.TrimSpace(composerSessionID))
+		}
+		_ = writer.WriteField("composer_entry_point", "inline_composer")
+		_ = writer.WriteField("composer_source_surface", "timeline")
+		_ = writer.WriteField("waterfallxapp", "comet")
+		_ = writer.WriteField("voice_clip", "false")
+		_ = writer.WriteField("story_attachment", "true")
+		_ = writer.WriteField("profile_id", actorID)
+		_ = writer.WriteField("target_id", actorID)
+		_ = writer.WriteField("source", "8")
+
+		// BUG FIX: Dùng CreatePart với Content-Type chính xác thay vì CreateFormFile.
+		// CreateFormFile luôn set "application/octet-stream" → Facebook không nhận ra là ảnh
+		// → không trả về photo_id/fbid → upload thất bại.
+		mimeType := detectMimeType(localPath)
+		partHeader := make(textproto.MIMEHeader)
+		partHeader.Set("Content-Disposition",
+			fmt.Sprintf(`form-data; name="%s"; filename="%s"`, strategy.fileField, filepath.Base(localPath)))
+		partHeader.Set("Content-Type", mimeType)
+		part, err := writer.CreatePart(partHeader)
+		if err == nil {
+			_, err = io.Copy(part, file)
+		}
+		_ = file.Close()
+		if err != nil {
+			lastErr = fmt.Errorf("cannot append media file to multipart payload: %w", err)
+			_ = writer.Close()
+			continue
+		}
+		_ = writer.Close()
+
+		req, err := http.NewRequest("POST", strategy.endpoint, &reqBody)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		req.Header.Set("Content-Type", writer.FormDataContentType())
+		req.Header.Set("Cookie", cookie)
+		req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+		req.Header.Set("Origin", "https://www.facebook.com")
+		req.Header.Set("Referer", "https://www.facebook.com/")
+		req.Header.Set("Accept", "*/*")
+
+		if strings.Contains(strategy.endpoint, "upload.facebook.com") {
+			req.Header.Set("Sec-Fetch-Site", "same-site")
+		} else {
+			req.Header.Set("Sec-Fetch-Site", "same-origin")
+		}
+
+		req.Header.Set("Sec-Fetch-Mode", "cors")
+		req.Header.Set("Sec-Fetch-Dest", "empty")
+		req.Header.Set("X-FB-LSD", lsd)
+		req.Header.Set("X-ASBD-ID", "129477")
+
+		httpClient := &http.Client{Timeout: 60 * time.Second}
+		httpResp, err := httpClient.Do(req)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		respBytes, _ := io.ReadAll(httpResp.Body)
+		_ = httpResp.Body.Close()
+		respText := strings.TrimSpace(string(respBytes))
+
+		// DEBUG: In toàn bộ body nếu không phải là mercury để xem FB trả lỗi gì
+		if !strings.Contains(strategy.endpoint, "mercury") {
+			fmt.Printf("[DEBUG] Endpoint %s response (status=%d): %s\n", strategy.endpoint, httpResp.StatusCode, respText)
+		}
+
+		if httpResp.StatusCode >= 400 {
+			snippet := respText
+			if len(snippet) > 180 {
+				snippet = snippet[:180] + "..."
+			}
+			lastErr = fmt.Errorf("upload endpoint '%s' returned status=%d body=%s", strategy.endpoint, httpResp.StatusCode, snippet)
+			continue
+		}
+		if strings.Contains(respText, `"error":1357001`) || strings.Contains(respText, `"errorSummary":"\u0110\u0103ng nh\u1eadp \u0111\u1ec3 ti\u1ebfp t\u1ee5c"`) {
+			lastErr = fmt.Errorf("upload endpoint '%s' yêu cầu đăng nhập lại (error 1357001)", strategy.endpoint)
+			continue
+		}
+
+		photoID, idSource := parseUploadedPhotoIDFromBody(respText)
+		if photoID == "" {
+			candidates := summarizeUploadIDCandidates(respText)
+			if candidates != "none" {
+				fmt.Printf("[WARN] Upload endpoint %s khong parse duoc photo_id. Candidates: %s\n", strategy.endpoint, candidates)
+			}
+			if fileID := parseUploadedFileIDFromBody(respText); fileID != "" {
+				lastErr = fmt.Errorf("upload endpoint '%s' returned file_id=%s but no usable photo_id/fbid", strategy.endpoint, fileID)
+				continue
+			}
+			snippet := respText
+			if len(snippet) > 220 {
+				snippet = snippet[:220] + "..."
+			}
+			lastErr = fmt.Errorf("upload endpoint '%s' did not return photo id, body=%s", strategy.endpoint, snippet)
+			continue
+		}
+		fmt.Printf("[INFO] Upload candidates: %s\n", summarizeUploadIDCandidates(respText))
+		fmt.Printf("[INFO] Uploaded local media '%s' -> photo_id=%s (source=%s) via %s\n", localPath, photoID, idSource, strategy.endpoint)
+		return photoID, nil
+	}
+
+	if lastErr == nil {
+		lastErr = fmt.Errorf("all upload strategies failed for '%s'", localPath)
+	}
+	return "", lastErr
+}
+
 // extractDtsgFromError trích xuất dtsgToken từ phản hồi lỗi 1357004 của Facebook
 // Facebook “tặng” token hợp lệ trong body lỗi, dùng cho lần request tiếp theo
 func extractDtsgFromError(body string) string {
@@ -69,6 +565,10 @@ type SessionData struct {
 	DTSG  string
 	Rev   string
 	HSI   string
+	HS    string
+	S     string
+	Dyn   string
+	CSR   string
 	SpinR string
 	SpinT string
 }
@@ -114,6 +614,34 @@ func fetchSessionData(cookie string) (data SessionData, err error) {
 	hsiMatches := hsiRegex.FindStringSubmatch(bodyStr)
 	if len(hsiMatches) > 1 {
 		data.HSI = hsiMatches[1]
+	}
+
+	// Lay __hs
+	hsRegex := regexp.MustCompile(`"__hs":"([^"]+)"`)
+	hsMatches := hsRegex.FindStringSubmatch(bodyStr)
+	if len(hsMatches) > 1 {
+		data.HS = hsMatches[1]
+	}
+
+	// Lay __s
+	sRegex := regexp.MustCompile(`"__s":"([^"]+)"`)
+	sMatches := sRegex.FindStringSubmatch(bodyStr)
+	if len(sMatches) > 1 {
+		data.S = sMatches[1]
+	}
+
+	// Lay __dyn
+	dynRegex := regexp.MustCompile(`"__dyn":"([^"]+)"`)
+	dynMatches := dynRegex.FindStringSubmatch(bodyStr)
+	if len(dynMatches) > 1 {
+		data.Dyn = dynMatches[1]
+	}
+
+	// Lay __csr
+	csrRegex := regexp.MustCompile(`"__csr":"([^"]+)"`)
+	csrMatches := csrRegex.FindStringSubmatch(bodyStr)
+	if len(csrMatches) > 1 {
+		data.CSR = csrMatches[1]
 	}
 
 	// Lấy Spin R (__spin_r)
@@ -920,6 +1448,29 @@ func (h *ActionHandler) UpdateReactDocID(docID string) (string, error) {
 	return h.configStore.GetReactDocID(), nil
 }
 
+// GetCreatePostDocID lay doc_id cho ComposerStoryCreateMutation tu config.
+func (h *ActionHandler) GetCreatePostDocID() string {
+	if h.configStore != nil {
+		if v := h.configStore.GetCreatePostDocID(); v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// UpdateCreatePostDocID cap nhat create_post doc_id.
+// Lay doc_id moi tu F12 > Network > ComposerStoryCreateMutation > Request Payload > doc_id.
+// Truyen chuoi rong de reset ve default.
+func (h *ActionHandler) UpdateCreatePostDocID(docID string) (string, error) {
+	if h.configStore == nil {
+		return "", errors.New("config store chua duoc khoi tao")
+	}
+	if err := h.configStore.SetCreatePostDocID(docID); err != nil {
+		return "", err
+	}
+	return h.configStore.GetCreatePostDocID(), nil
+}
+
 // toLog chuyển response thành ActionLog entry
 func toLog(resp LikePostResponse, msg string) ActionLog {
 	return ActionLog{
@@ -965,13 +1516,24 @@ func logFromPost(resp CreatePostResponse, msg string) ActionLog {
 
 func (h *ActionHandler) CreatePost(req CreatePostRequest) CreatePostResponse {
 	now := time.Now()
+	if len(req.ImagePaths) == 0 {
+		fmt.Printf("[INFO] CreatePost payload: image_paths=0 (frontend khong gui media)\n")
+	} else {
+		fmt.Printf("[INFO] CreatePost payload: image_paths=%d -> %v\n", len(req.ImagePaths), req.ImagePaths)
+	}
 
 	postText := strings.TrimSpace(req.PostText)
-	if postText == "" {
+	photoIDs, localMediaInputs, ignoredMediaInputs := extractPhotoIDsFromImagePaths(req.ImagePaths)
+	hasMediaAttachments := len(photoIDs) > 0
+	if postText == "" && !hasMediaAttachments && len(localMediaInputs) == 0 {
+		msg := "Nội dung đăng bài không được để trống."
+		if len(req.ImagePaths) > 0 {
+			msg = "Bai dang can co text hoac media id hop le (photo_id/media_fbid)."
+		}
 		resp := CreatePostResponse{
 			Success: false, Status: StatusValidationError,
 			Action: "create_post", AccountID: req.AccountID, PostText: postText,
-			DryRun: req.DryRun, Message: "Nội dung đăng bài không được để trống.", ExecutedAt: now,
+			DryRun: req.DryRun, Message: msg, ExecutedAt: now,
 		}
 		return resp
 	}
@@ -1023,21 +1585,34 @@ func (h *ActionHandler) CreatePost(req CreatePostRequest) CreatePostResponse {
 		AddLog(logFromPost(resp, resp.Message))
 		return resp
 	}
+	if len(ignoredMediaInputs) > 0 {
+		fmt.Printf("[WARN] Bỏ qua %d media input không parse được photo_id: %v\n", len(ignoredMediaInputs), ignoredMediaInputs)
+	}
+	if len(localMediaInputs) > 0 {
+		fmt.Printf("[INFO] Có %d media local sẽ upload để lấy photo_id: %v\n", len(localMediaInputs), localMediaInputs)
+	}
 
 	if req.DryRun {
 		sleepMs := 500 + rand.Intn(701)
 		time.Sleep(time.Duration(sleepMs) * time.Millisecond)
 
-		snippet := postText
-		if len(snippet) > 20 {
-			snippet = snippet[:20] + "..."
+		snippet := "[MEDIA ONLY]"
+		if postText != "" {
+			snippet = postText
+			if len(snippet) > 20 {
+				snippet = snippet[:20] + "..."
+			}
+		}
+		mediaInfo := ""
+		if hasMediaAttachments {
+			mediaInfo = fmt.Sprintf(" | media_id=%d", len(photoIDs))
 		}
 
 		resp := CreatePostResponse{
 			Success: true, Status: StatusSuccess,
 			Action: "create_post", AccountID: accountID, AccountDisplayName: displayName, PostText: postText,
 			DryRun:     true,
-			Message:    fmt.Sprintf("[DRY RUN] Đã đăng bài nháp: \"%s\" bằng tài khoản %s", snippet, displayName),
+			Message:    fmt.Sprintf("[DRY RUN] Đã đăng bài nháp: \"%s\" bằng tài khoản %s%s", snippet, displayName, mediaInfo),
 			ExecutedAt: time.Now(),
 		}
 		AddLog(logFromPost(resp, resp.Message))
@@ -1099,26 +1674,70 @@ func (h *ActionHandler) CreatePost(req CreatePostRequest) CreatePostResponse {
 	// ── Two-Step DTSG Strategy ──────────────────────────────────────────────
 	// Facebook trả về token hợp lệ trong lỗi 1357004 → học rồi thử lại ngay
 
-	docID := "26695477506728717"
+	// Uu tien doc_id moi (user capture thanh cong), sau do den doc_id cu de fallback.
+	// Neu user set doc_id trong settings thi van duoc uu tien.
+	preferredCreateDocIDs := []string{
+		"26400547339631027", // payload user capture thanh cong
+		"27581837698072404", // fallback cu
+	}
+	docIDCandidates := make([]string, 0, 3)
+	seenDocID := make(map[string]struct{})
+	appendDocID := func(id string) {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			return
+		}
+		if _, ok := seenDocID[id]; ok {
+			return
+		}
+		seenDocID[id] = struct{}{}
+		docIDCandidates = append(docIDCandidates, id)
+	}
+	if h.configStore != nil {
+		appendDocID(h.configStore.GetCreatePostDocID())
+	}
+	for _, id := range preferredCreateDocIDs {
+		appendDocID(id)
+	}
+	if len(docIDCandidates) == 0 {
+		docIDCandidates = append(docIDCandidates, "26400547339631027")
+	}
+	currentDocID := docIDCandidates[0]
+	fmt.Printf("[INFO] CreatePost doc_id đang dùng: %s\n", currentDocID)
+
+	attachmentsJSON := "[]"
+	mediaNote := ""
+	attachmentVariants := []attachmentVariant{{Name: "none", JSON: "[]"}}
+	currentAttachmentVariantIdx := 0
+	attachmentMode := "none"
+	composerSessionID := generateToken()
+	idempotenceToken := fmt.Sprintf("%s_FEED", composerSessionID)
+	messageTextForMutation := postText
 
 	// Helper: xây dựng variables JSON CHÍNH XÁC theo browser (captured từ F12)
-	buildVariables := func(_ string) string {
-		rawToken := generateToken()
-		idempotenceToken := fmt.Sprintf("%s_FEED", rawToken)
-		composerSessionID := rawToken // Cùng UUID, không có _FEED
+	buildVariables := func() string {
+		// Facebook ComposerStoryCreateMutation expects MessageInput object (non-nullable).
+		// null → field_exception 1357010.
+		// Omit → field_exception 1357010.
+		messageField := `"message":{"ranges":[],"text":""},`
+		if strings.TrimSpace(messageTextForMutation) != "" {
+			messageField = fmt.Sprintf(`"message":{"ranges":[],"text":%s},`, jsonStr(messageTextForMutation))
+		}
+
 		return fmt.Sprintf(`{`+
 			`"input":{`+
 			`"composer_entry_point":"inline_composer",`+
 			`"composer_source_surface":"timeline",`+
 			`"idempotence_token":%s,`+
 			`"source":"WWW",`+
-			`"attachments":[],`+
-			`"audience":{"privacy":{"allow":[],"base_state":"FRIENDS","deny":[],"tag_expansion_state":"UNSPECIFIED"}},`+
-			`"message":{"ranges":[],"text":%s},`+
+			`"attachments":%s,`+
+			`"audience":{"privacy":{"allow":[],"base_state":"EVERYONE","deny":[],"tag_expansion_state":"UNSPECIFIED"}},`+
+			`%s`+ // messageField — conditional: có text thì gửi, không có thì bỏ qua
 			`"with_tags_ids":null,`+
 			`"inline_activities":[],`+
 			`"text_format_preset_id":"0",`+
 			`"publishing_flow":{"supported_flows":["ASYNC_SILENT","ASYNC_NOTIF","FALLBACK"]},`+
+			`"post_publish_story_data":{"reshare_post_as_sticker":"DISABLED"},`+
 			`"logging":{"composer_session_id":%s},`+
 			`"navigation_data":{"attribution_id_v2":"ProfileCometTimelineListViewRoot.react,comet.profile.timeline.list,via_cold_start,1776157041276,201193,190055527696468,,"},`+
 			`"tracking":[null],`+
@@ -1158,7 +1777,7 @@ func (h *ActionHandler) CreatePost(req CreatePostRequest) CreatePostResponse {
 			`"__relay_internal__pv__CometUFICommentActionLinksRewriteEnabledrelayprovider":false,`+
 			`"__relay_internal__pv__IsWorkUserrelayprovider":false,`+
 			`"__relay_internal__pv__CometUFIReactionsEnableShortNamerelayprovider":false,`+
-			`"__relay_internal__pv__CometUFISingleLineUFIrelayprovider":false,`+
+			`"__relay_internal__pv__CometUFISingleLineUFIrelayprovider":true,`+
 			`"__relay_internal__pv__CometFeedStory_enable_post_permalink_white_space_clickrelayprovider":false,`+
 			`"__relay_internal__pv__TestPilotShouldIncludeDemoAdUseCaserelayprovider":false,`+
 			`"__relay_internal__pv__FBReels_deprecate_short_form_video_context_gkrelayprovider":true,`+
@@ -1172,11 +1791,11 @@ func (h *ActionHandler) CreatePost(req CreatePostRequest) CreatePostResponse {
 			`"__relay_internal__pv__ShouldEnableBakedInTextStoriesrelayprovider":false,`+
 			`"__relay_internal__pv__StoriesShouldIncludeFbNotesrelayprovider":false,`+
 			`"__relay_internal__pv__groups_comet_use_glvrelayprovider":false,`+
-			`"__relay_internal__pv__GHLShouldChangeSponsoredAuctionDistanceFieldNamerelayprovider":true,`+
-			`"__relay_internal__pv__GHLShouldUseSponsoredAuctionLabelFieldNameV1relayprovider":true,`+
+			`"__relay_internal__pv__GHLShouldChangeSponsoredAuctionDistanceFieldNamerelayprovider":false,`+
+			`"__relay_internal__pv__GHLShouldUseSponsoredAuctionLabelFieldNameV1relayprovider":false,`+
 			`"__relay_internal__pv__GHLShouldUseSponsoredAuctionLabelFieldNameV2relayprovider":false`+
 			`}`,
-			jsonStr(idempotenceToken), jsonStr(postText), jsonStr(composerSessionID), jsonStr(actorID))
+			jsonStr(idempotenceToken), attachmentsJSON, messageField, jsonStr(composerSessionID), jsonStr(actorID))
 	}
 
 	// Lấy LSD token (cần thiết cho Comet GraphQL endpoint)
@@ -1190,18 +1809,125 @@ func (h *ActionHandler) CreatePost(req CreatePostRequest) CreatePostResponse {
 	}
 
 	// Helper: thực hiện một lần POST lên GraphQL
-	doGraphQLPost := func(fbDtsg string) (int, string, error) {
-		vars := buildVariables(fbDtsg)
-		fd := url.Values{}
-		fd.Set("fb_dtsg", fbDtsg) // Gửi FULL token (kể cả :3:timestamp)
-		// Jazoest tính từ phần token trước dấu ":" đầu tiên
-		jazoestBase := fbDtsg
-		if idx := strings.Index(jazoestBase, ":"); idx > 0 {
-			jazoestBase = jazoestBase[:idx]
+
+	currentDtsg := strings.TrimSpace(fbInfo.Info.FbDtsg)
+	if sdErr == nil && strings.TrimSpace(sessionData.DTSG) != "" {
+		currentDtsg = strings.TrimSpace(sessionData.DTSG)
+	}
+	if currentDtsg == "" {
+		resp := CreatePostResponse{
+			Success: false, Status: StatusSessionInvalid,
+			Action: "create_post", AccountID: accountID, AccountDisplayName: displayName, PostText: postText,
+			DryRun: false, Message: "Khong co fb_dtsg hop le de dang bai.",
+			ExecutedAt: time.Now(),
 		}
-		fd.Set("jazoest", calcJazoest(jazoestBase))
+		AddLog(logFromPost(resp, resp.Message))
+		return resp
+	}
+
+	if len(localMediaInputs) > 0 {
+		for _, localInput := range localMediaInputs {
+			uploadedPhotoID, upErr := uploadOneLocalMedia(
+				fbInfo.Info.Cookie,
+				actorID,
+				currentDtsg,
+				lsd,
+				sessionData,
+				localInput,
+				composerSessionID,
+			)
+			if upErr != nil {
+				resp := CreatePostResponse{
+					Success: false, Status: StatusFailed,
+					Action: "create_post", AccountID: accountID, AccountDisplayName: displayName, PostText: postText,
+					DryRun: false, Message: fmt.Sprintf("Upload media local that bai (%s): %v", localInput, upErr),
+					ExecutedAt: time.Now(),
+				}
+				AddLog(logFromPost(resp, resp.Message))
+				return resp
+			}
+			photoIDs = append(photoIDs, uploadedPhotoID)
+		}
+	}
+
+	hasMediaAttachments = len(photoIDs) > 0
+	if postText == "" && !hasMediaAttachments {
+		resp := CreatePostResponse{
+			Success: false, Status: StatusValidationError,
+			Action: "create_post", AccountID: accountID, AccountDisplayName: displayName, PostText: postText,
+			DryRun: false, Message: "Khong lay duoc photo_id tu media da chon.",
+			ExecutedAt: time.Now(),
+		}
+		AddLog(logFromPost(resp, resp.Message))
+		return resp
+	}
+
+	if hasMediaAttachments {
+		attachmentVariants = buildAttachmentVariants(photoIDs)
+		currentAttachmentVariantIdx = 0
+		attachmentsJSON = attachmentVariants[currentAttachmentVariantIdx].JSON
+		attachmentMode = attachmentVariants[currentAttachmentVariantIdx].Name
+		fmt.Printf("[INFO] Attachment mode=%s\n", attachmentMode)
+	}
+	if hasMediaAttachments {
+		mediaNote += fmt.Sprintf(" | media_id=%d", len(photoIDs))
+	}
+	if len(ignoredMediaInputs) > 0 {
+		mediaNote += fmt.Sprintf(" | bo_qua_media=%d", len(ignoredMediaInputs))
+	}
+	if len(localMediaInputs) > 0 {
+		mediaNote += fmt.Sprintf(" | local_media=%d", len(localMediaInputs))
+	}
+	attachmentModeSuffix := func() string {
+		if !hasMediaAttachments {
+			return ""
+		}
+		return " | attach_mode=" + attachmentMode
+	}
+	doGraphQLPost := func(fbDtsg string) (int, string, error) {
+		vars := buildVariables()
+		fd := url.Values{}
+		fd.Set("av", actorID)
+		fd.Set("__aaid", "0")
+		fd.Set("__user", actorID)
+		fd.Set("__a", "1")
+		fd.Set("__req", "28")
+		if strings.TrimSpace(sessionData.HS) != "" {
+			fd.Set("__hs", strings.TrimSpace(sessionData.HS))
+		}
+		if strings.TrimSpace(sessionData.S) != "" {
+			fd.Set("__s", strings.TrimSpace(sessionData.S))
+		}
+		if strings.TrimSpace(sessionData.Dyn) != "" {
+			fd.Set("__dyn", strings.TrimSpace(sessionData.Dyn))
+		}
+		if strings.TrimSpace(sessionData.CSR) != "" {
+			fd.Set("__csr", strings.TrimSpace(sessionData.CSR))
+		}
+		fd.Set("dpr", "1")
+		fd.Set("__ccg", "EXCELLENT")
+		if strings.TrimSpace(sessionData.Rev) != "" {
+			fd.Set("__rev", strings.TrimSpace(sessionData.Rev))
+		}
+		if strings.TrimSpace(sessionData.HSI) != "" {
+			fd.Set("__hsi", strings.TrimSpace(sessionData.HSI))
+		}
+		fd.Set("fb_dtsg", fbDtsg) // Gửi FULL token (kể cả :3:timestamp)
+		fd.Set("jazoest", calcJazoest(fbDtsg))
+		if strings.TrimSpace(sessionData.SpinR) != "" {
+			fd.Set("__spin_r", strings.TrimSpace(sessionData.SpinR))
+		}
+		fd.Set("__spin_b", "trunk")
+		if strings.TrimSpace(sessionData.SpinT) != "" {
+			fd.Set("__spin_t", strings.TrimSpace(sessionData.SpinT))
+		}
+		fd.Set("__comet_req", "15")
+		fd.Set("__crn", "comet.fbweb.CometProfileTimelineListViewRoute")
 		fd.Set("lsd", lsd)
-		fd.Set("doc_id", docID)
+		fd.Set("doc_id", currentDocID)
+		fd.Set("fb_api_caller_class", "RelayModern")
+		fd.Set("fb_api_req_friendly_name", "ComposerStoryCreateMutation")
+		fd.Set("server_timestamps", "true")
 		fd.Set("variables", vars)
 
 		req, err := http.NewRequest("POST", "https://www.facebook.com/api/graphql/", strings.NewReader(fd.Encode()))
@@ -1253,7 +1979,7 @@ func (h *ActionHandler) CreatePost(req CreatePostRequest) CreatePostResponse {
 
 	// ── Lần 1: Thử với fb_dtsg ĐẦY ĐỦ (bao gồm :3:timestamp) ────────────────────
 	// QUAN TRỌẠNG: KHÔNG cắt bỏ :version:ts vì nó là một phần của token!
-	currentDtsg := fbInfo.Info.FbDtsg
+	currentDtsg = strings.TrimSpace(currentDtsg)
 	shortDtsg := currentDtsg
 	if len(shortDtsg) > 20 {
 		shortDtsg = shortDtsg[:20]
@@ -1294,20 +2020,163 @@ func (h *ActionHandler) CreatePost(req CreatePostRequest) CreatePostResponse {
 		resp := CreatePostResponse{
 			Success: true, Status: StatusSuccess,
 			Action: "create_post", AccountID: accountID, AccountDisplayName: displayName, PostText: postText,
-			DryRun: false, Message: fmt.Sprintf("Đăng bài thành công lần 1 — Tài khoản: %s!", displayName),
+			DryRun: false, Message: fmt.Sprintf("Đăng bài thành công lần 1 — Tài khoản: %s!%s%s", displayName, mediaNote, attachmentModeSuffix()),
 			ExecutedAt: time.Now(),
 		}
 		AddLog(logFromPost(resp, resp.Message))
 		return resp
 	}
 
-	// ── Lần 2: Học token từ lỗi rồi thử lại ────────────────────────────────
-	freshDtsg := extractDtsgFromError(body1)
-	if freshDtsg == "" {
+	// Fallback attachment shape cho lỗi field_exception (1357010).
+	if hasMediaAttachments && hasGraphQLErrorCode(body1, "1357010") && len(attachmentVariants) > 1 {
+		for idx := currentAttachmentVariantIdx + 1; idx < len(attachmentVariants); idx++ {
+			currentAttachmentVariantIdx = idx
+			attachmentsJSON = attachmentVariants[currentAttachmentVariantIdx].JSON
+			attachmentMode = attachmentVariants[currentAttachmentVariantIdx].Name
+			fmt.Printf("[WARN] GraphQL code 1357010. Retry with attachment mode=%s\n", attachmentMode)
+
+			statusAlt, bodyAlt, errAlt := doGraphQLPost(currentDtsg)
+			if errAlt != nil {
+				fmt.Printf("[WARN] Retry mode=%s failed by HTTP error: %v\n", attachmentMode, errAlt)
+				continue
+			}
+			snippetAlt := bodyAlt
+			if len(snippetAlt) > 300 {
+				snippetAlt = snippetAlt[:300]
+			}
+			fmt.Printf("=== RESP Retry mode=%s (status=%d, len=%d) ===\n%s\n====================\n",
+				attachmentMode, statusAlt, len(bodyAlt), snippetAlt)
+
+			if bodyAlt != "" && !strings.Contains(bodyAlt, `"error":`) && !strings.Contains(bodyAlt, `"errors":[`) {
+				resp := CreatePostResponse{
+					Success: true, Status: StatusSuccess,
+					Action: "create_post", AccountID: accountID, AccountDisplayName: displayName, PostText: postText,
+					DryRun: false, Message: fmt.Sprintf("Đăng bài thành công (fallback attachment) — Tài khoản: %s!%s%s", displayName, mediaNote, attachmentModeSuffix()),
+					ExecutedAt: time.Now(),
+				}
+				AddLog(logFromPost(resp, resp.Message))
+				return resp
+			}
+
+			status1 = statusAlt
+			body1 = bodyAlt
+			snippet1 = snippetAlt
+			if !hasGraphQLErrorCode(body1, "1357010") {
+				break
+			}
+		}
+	}
+
+	// Neu van 1357010, thu doc_id khac (payload user capture thanh cong la 26400547339631027).
+	if hasGraphQLErrorCode(body1, "1357010") && len(docIDCandidates) > 1 {
+		for d := 1; d < len(docIDCandidates); d++ {
+			currentDocID = docIDCandidates[d]
+			fmt.Printf("[WARN] GraphQL code 1357010. Retry with another doc_id=%s\n", currentDocID)
+
+			// Reset state ve mode photo + message goc de bam sat payload tay.
+			messageTextForMutation = postText
+			if hasMediaAttachments && len(attachmentVariants) > 0 {
+				currentAttachmentVariantIdx = 0
+				attachmentsJSON = attachmentVariants[currentAttachmentVariantIdx].JSON
+				attachmentMode = attachmentVariants[currentAttachmentVariantIdx].Name
+			}
+
+			statusDoc, bodyDoc, errDoc := doGraphQLPost(currentDtsg)
+			if errDoc != nil {
+				fmt.Printf("[WARN] Retry doc_id=%s failed by HTTP error: %v\n", currentDocID, errDoc)
+				continue
+			}
+			snippetDoc := bodyDoc
+			if len(snippetDoc) > 300 {
+				snippetDoc = snippetDoc[:300]
+			}
+			fmt.Printf("=== RESP Retry doc_id=%s (status=%d, len=%d) ===\n%s\n====================\n",
+				currentDocID, statusDoc, len(bodyDoc), snippetDoc)
+
+			if bodyDoc != "" && !strings.Contains(bodyDoc, `"error":`) && !strings.Contains(bodyDoc, `"errors":[`) {
+				resp := CreatePostResponse{
+					Success: true, Status: StatusSuccess,
+					Action: "create_post", AccountID: accountID, AccountDisplayName: displayName, PostText: postText,
+					DryRun: false, Message: fmt.Sprintf("Đăng bài thành công (doc_id fallback) — Tài khoản: %s!%s%s", displayName, mediaNote, attachmentModeSuffix()),
+					ExecutedAt: time.Now(),
+				}
+				AddLog(logFromPost(resp, resp.Message))
+				return resp
+			}
+
+			// Thu attachment variants tren doc_id moi.
+			if hasMediaAttachments && hasGraphQLErrorCode(bodyDoc, "1357010") && len(attachmentVariants) > 1 {
+				for idx := 1; idx < len(attachmentVariants); idx++ {
+					currentAttachmentVariantIdx = idx
+					attachmentsJSON = attachmentVariants[currentAttachmentVariantIdx].JSON
+					attachmentMode = attachmentVariants[currentAttachmentVariantIdx].Name
+					fmt.Printf("[WARN] doc_id=%s retry with attachment mode=%s\n", currentDocID, attachmentMode)
+
+					statusAlt, bodyAlt, errAlt := doGraphQLPost(currentDtsg)
+					if errAlt != nil {
+						fmt.Printf("[WARN] doc_id=%s mode=%s failed by HTTP error: %v\n", currentDocID, attachmentMode, errAlt)
+						continue
+					}
+					snippetAlt := bodyAlt
+					if len(snippetAlt) > 300 {
+						snippetAlt = snippetAlt[:300]
+					}
+					fmt.Printf("=== RESP Retry doc_id=%s mode=%s (status=%d, len=%d) ===\n%s\n====================\n",
+						currentDocID, attachmentMode, statusAlt, len(bodyAlt), snippetAlt)
+
+					if bodyAlt != "" && !strings.Contains(bodyAlt, `"error":`) && !strings.Contains(bodyAlt, `"errors":[`) {
+						resp := CreatePostResponse{
+							Success: true, Status: StatusSuccess,
+							Action: "create_post", AccountID: accountID, AccountDisplayName: displayName, PostText: postText,
+							DryRun: false, Message: fmt.Sprintf("Đăng bài thành công (doc_id + attachment fallback) — Tài khoản: %s!%s%s", displayName, mediaNote, attachmentModeSuffix()),
+							ExecutedAt: time.Now(),
+						}
+						AddLog(logFromPost(resp, resp.Message))
+						return resp
+					}
+
+					statusDoc = statusAlt
+					bodyDoc = bodyAlt
+					snippetDoc = snippetAlt
+					if !hasGraphQLErrorCode(bodyDoc, "1357010") {
+						break
+					}
+				}
+			}
+
+			status1 = statusDoc
+			body1 = bodyDoc
+			snippet1 = snippetDoc
+			if !hasGraphQLErrorCode(body1, "1357010") {
+				break
+			}
+		}
+	}
+
+	// ── Lần 2: Chỉ retry khi lỗi DTSG/session hết hạn (1357004, 1357032) ──────
+	// Các lỗi khác (1357010=field_exception, v.v.) là lỗi THẬT từ FB — báo thẳng.
+	isDtsgExpiry := strings.Contains(body1, `"error":1357004`) ||
+		strings.Contains(body1, `"error":1357032`)
+
+	if !isDtsgExpiry {
+		// Lỗi thật từ Facebook — trả về ngay, không retry vô nghĩa
 		resp := CreatePostResponse{
 			Success: false, Status: StatusFailed,
 			Action: "create_post", AccountID: accountID, AccountDisplayName: displayName, PostText: postText,
-			DryRun: false, Message: "Không trích xuất được dtsgToken từ lỗi. Body: " + snippet1,
+			DryRun: false, Message: "Facebook từ chối bài đăng: " + snippet1,
+			ExecutedAt: time.Now(),
+		}
+		AddLog(logFromPost(resp, resp.Message))
+		return resp
+	}
+
+	// Chỉ đến đây khi lỗi là DTSG hết hạn — thử lấy token mới từ body lỗi
+	freshDtsg := extractDtsgFromError(body1)
+	if freshDtsg == "" {
+		resp := CreatePostResponse{
+			Success: false, Status: StatusSessionInvalid,
+			Action: "create_post", AccountID: accountID, AccountDisplayName: displayName, PostText: postText,
+			DryRun: false, Message: "Phiên DTSG đã hết hạn nhưng không lấy được token mới. Cập nhật lại fb_dtsg trong facebook_data.json. Body: " + snippet1,
 			ExecutedAt: time.Now(),
 		}
 		AddLog(logFromPost(resp, resp.Message))
@@ -1347,7 +2216,7 @@ func (h *ActionHandler) CreatePost(req CreatePostRequest) CreatePostResponse {
 	resp := CreatePostResponse{
 		Success: true, Status: StatusSuccess,
 		Action: "create_post", AccountID: accountID, AccountDisplayName: displayName, PostText: postText,
-		DryRun: false, Message: fmt.Sprintf("Đăng bài thành công (Two-Step DTSG) — Tài khoản: %s!", displayName),
+		DryRun: false, Message: fmt.Sprintf("Đăng bài thành công (Two-Step DTSG) — Tài khoản: %s!%s%s", displayName, mediaNote, attachmentModeSuffix()),
 		ExecutedAt: time.Now(),
 	}
 	AddLog(logFromPost(resp, resp.Message))
