@@ -11,6 +11,8 @@ const navItems = [
   { id: 'tasks', label: 'Quét thông tin', icon: icons.repeat },
   { id: 'accounts', label: 'Tài khoản', icon: icons.users },
   { id: 'action-like-test', label: 'Tương tác bài viết', icon: icons.thumbsUp },
+  { id: 'action-comment-test', label: 'Bình luận bài viết', icon: icons.fileText },
+  { id: 'action-post-test', label: 'Đăng bài viết', icon: icons.share2 },
   { id: 'settings', label: 'Cài đặt', icon: icons.settings },
 ]
 </script>

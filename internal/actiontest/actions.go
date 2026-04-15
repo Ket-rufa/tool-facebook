@@ -77,7 +77,7 @@ type SessionData struct {
 func fetchSessionData(cookie string) (data SessionData, err error) {
 	client := &http.Client{Timeout: 10 * time.Second}
 	req, _ := http.NewRequest("GET", "https://www.facebook.com/", nil)
-	
+
 	// Headers siêu tàng hình
 	req.Header.Set("Cookie", cookie)
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
@@ -132,7 +132,7 @@ func fetchSessionData(cookie string) (data SessionData, err error) {
 
 	// Kiểm tra xem có thực sự đang ở trạng thái đăng nhập không
 	isLoggedIn := strings.Contains(bodyStr, `"USER_ID":"`) || strings.Contains(bodyStr, "c_user=") || strings.Contains(bodyStr, actorIDFromCookie(cookie))
-	
+
 	if !isLoggedIn {
 		fmt.Printf("[WARN] Facebook yêu cầu đăng nhập (hoặc Cookie đã hết hạn) khi lấy LSD.\n")
 		// In thử tiêu đề trang để biết đang ở đâu
@@ -169,20 +169,20 @@ func fetchSessionData(cookie string) (data SessionData, err error) {
 	dtsgPatterns := []string{
 		`"(NAfv[a-zA-Z0-9_\-\:]+)"`, // Ưu tiên hàng hiệu NAfv (Chìa khóa vạn năng cho mutations)
 		`"(NAfu[a-zA-Z0-9_\-\:]+)"`, // Ưu tiên mã NAfu
-		`"DTSGInitialData"\s*,\s*\[\s*\]\s*,\s*\{\s*"token"\s*:\s*"(.*?)"`,
-		`"DTSGInitData"\s*,\s*\[\s*\]\s*,\s*\{\s*"token"\s*:\s*"(.*?)"`,
-		`"fb_dtsg"\s*:\s*"(.*?)"`,
-		`name="fb_dtsg"\s*value="(.*?)"`,
+		`"DTSGInitialData"\s*,\s*\[\s*\]\s*,\s*\{\s*"token"\s*:\s*"(.+?)"`,
+		`"DTSGInitData"\s*,\s*\[\s*\]\s*,\s*\{\s*"token"\s*:\s*"(.+?)"`,
+		`"fb_dtsg"\s*:\s*"(.+?)"`,
+		`name="fb_dtsg"\s*value="(.+?)"`,
 	}
 	for _, pattern := range dtsgPatterns {
 		r := regexp.MustCompile(pattern)
 		m := r.FindStringSubmatch(bodyStr)
 		if len(m) > 1 {
-			token := m[1]
-			// Chuẩn hóa ngay lập tức: bỏ phần :3:timestamp nếu có
-			if idx := strings.Index(token, ":"); idx > 0 {
-				token = token[:idx]
+			token := strings.TrimSpace(m[1])
+			if token == "" {
+				continue
 			}
+			// Giữ nguyên token full (kể cả suffix :n:timestamp nếu có).
 			data.DTSG = token
 			fmt.Printf("[INFO] Đã lấy được fb_dtsg mới (pattern: %s): %s\n", pattern[:min(20, len(pattern))], data.DTSG[:min(20, len(data.DTSG))])
 			break
@@ -274,7 +274,6 @@ func (h *ActionHandler) LikePost(req LikePostRequest) LikePostResponse {
 		}
 		return resp
 	}
-
 	reactionType := strings.ToLower(strings.TrimSpace(req.ReactionType))
 	if reactionType == "" {
 		reactionType = ReactionLike
@@ -367,14 +366,57 @@ func (h *ActionHandler) LikePost(req LikePostRequest) LikePostResponse {
 	}
 
 	// ── 6. Real Run ───────────────────────────────────────────────────
-	var cookie, fbDtsg, accUID string
-	if h.accountStore != nil {
-		acc, _ := h.accountStore.Get(accountID)
-		if acc != nil {
-			cookie = acc.Cookie
-			fbDtsg = acc.FbDtsg
-			accUID = acc.AccountID
+	var cookie, fbDtsg, actorID string
+	// Uu tien fbDataStore vi luong nay dang duoc dung on dinh cho comment/post.
+	if h.fbDataStore != nil {
+		if fbInfo, err := h.fbDataStore.Get(accountID); err == nil && fbInfo != nil {
+			cookie = strings.TrimSpace(fbInfo.Info.Cookie)
+			fbDtsg = strings.TrimSpace(fbInfo.Info.FbDtsg)
+			actorID = strings.TrimSpace(fbInfo.UID)
 		}
+	}
+	// Fallback sang accountStore neu fbDataStore khong co du lieu.
+	if h.accountStore != nil {
+		if acc, err := h.accountStore.Get(accountID); err == nil && acc != nil {
+			if cookie == "" {
+				cookie = strings.TrimSpace(acc.Cookie)
+			}
+			if fbDtsg == "" {
+				fbDtsg = strings.TrimSpace(acc.FbDtsg)
+			}
+		}
+	}
+	// actor_id that phai la c_user trong cookie.
+	if cookie != "" {
+		if uid := strings.TrimSpace(actorIDFromCookie(cookie)); uid != "" {
+			actorID = uid
+		}
+	}
+	if cookie == "" || fbDtsg == "" {
+		resp := LikePostResponse{
+			Success: false, Status: StatusSessionInvalid,
+			Action: reactionType, PostID: postID,
+			AccountID: accountID, AccountDisplayName: displayName, ReactionType: reactionType,
+			ReactionID: req.ReactionID,
+			DryRun:     false,
+			Message:    "Thieu Cookie hoac fb_dtsg cho tai khoan nay (nguon account/fbdata).",
+			ExecutedAt: time.Now(),
+		}
+		AddLog(toLog(resp, resp.Message))
+		return resp
+	}
+	if actorID == "" {
+		resp := LikePostResponse{
+			Success: false, Status: StatusSessionInvalid,
+			Action: reactionType, PostID: postID,
+			AccountID: accountID, AccountDisplayName: displayName, ReactionType: reactionType,
+			ReactionID: req.ReactionID,
+			DryRun:     false,
+			Message:    "Khong tim thay actor_id (c_user) trong cookie.",
+			ExecutedAt: time.Now(),
+		}
+		AddLog(toLog(resp, resp.Message))
+		return resp
 	}
 
 	// ── 6a. Pre-flight log — strategy is resolved inside executor ────────
@@ -382,14 +424,14 @@ func (h *ActionHandler) LikePost(req LikePostRequest) LikePostResponse {
 	log.Printf("[RealRun]   strategy   = auto (comet/doc_id fallback)")
 	log.Printf("[RealRun]   postID     = %q", postID)
 	log.Printf("[RealRun]   reactionID = %q", req.ReactionID)
-	log.Printf("[RealRun]   actorID    = %q", accUID)
+	log.Printf("[RealRun]   actorID    = %q", actorID)
 	configuredDocID := h.GetReactDocID()
 	if configuredDocID != "" {
 		log.Printf("[RealRun]   doc_id     = configured in app settings")
 	} else {
 		log.Printf("[RealRun]   doc_id     = from env FB_REACT_DOC_ID (if set), else inline query")
 	}
-	fbResp, errCode, err := ExecuteFacebookReaction(cookie, fbDtsg, accUID, postID, req.ReactionID, configuredDocID)
+	fbResp, errCode, err := ExecuteFacebookReaction(cookie, fbDtsg, actorID, postID, req.ReactionID, configuredDocID)
 
 	if err != nil {
 		errorStatus := StatusValidationError
@@ -437,6 +479,17 @@ func (h *ActionHandler) CommentPost(req CommentPostRequest) CommentPostResponse 
 		}
 		return resp
 	}
+	if err := validateFeedbackID(postID); err != nil {
+		resp := CommentPostResponse{
+			Success: false, Status: StatusValidationError,
+			Action: "comment", PostID: postID,
+			AccountID: req.AccountID, CommentText: req.CommentText,
+			DryRun:     req.DryRun,
+			Message:    fmt.Sprintf("Feedback ID không hợp lệ: %v (gợi ý: dùng ID dạng base64 bắt đầu 'ZmVlZGJhY2s6').", err),
+			ExecutedAt: now,
+		}
+		return resp
+	}
 
 	commentText := strings.TrimSpace(req.CommentText)
 	if commentText == "" {
@@ -470,8 +523,8 @@ func (h *ActionHandler) CommentPost(req CommentPostRequest) CommentPostResponse 
 				Success: false, Status: StatusValidationError,
 				Action: "comment", PostID: postID,
 				AccountID: accountID, CommentText: commentText,
-				DryRun: req.DryRun,
-				Message: fmt.Sprintf("Tài khoản '%s' không tìm thấy trong local store.", accountID),
+				DryRun:     req.DryRun,
+				Message:    fmt.Sprintf("Tài khoản '%s' không tìm thấy trong local store.", accountID),
 				ExecutedAt: now,
 			}
 			AddLog(logFromComment(resp, "Tài khoản không tồn tại"))
@@ -492,8 +545,8 @@ func (h *ActionHandler) CommentPost(req CommentPostRequest) CommentPostResponse 
 			Success: false, Status: StatusSessionInvalid,
 			Action: "comment", PostID: postID,
 			AccountID: accountID, AccountDisplayName: displayName, CommentText: commentText,
-			DryRun: req.DryRun,
-			Message: fmt.Sprintf("Phiên của tài khoản '%s' không hợp lệ (trạng thái: %s).", displayName, sessionStatusStr),
+			DryRun:     req.DryRun,
+			Message:    fmt.Sprintf("Phiên của tài khoản '%s' không hợp lệ (trạng thái: %s).", displayName, sessionStatusStr),
 			ExecutedAt: now,
 		}
 		AddLog(logFromComment(resp, resp.Message))
@@ -513,8 +566,8 @@ func (h *ActionHandler) CommentPost(req CommentPostRequest) CommentPostResponse 
 			Success: true, Status: StatusSuccess,
 			Action: "comment", PostID: postID,
 			AccountID: accountID, AccountDisplayName: displayName, CommentText: commentText,
-			DryRun: true,
-			Message: fmt.Sprintf("[DRY RUN] Đã bình luận: \"%s\" bằng tài khoản %s — Bài viết: %s", snippet, displayName, postID),
+			DryRun:     true,
+			Message:    fmt.Sprintf("[DRY RUN] Đã bình luận: \"%s\" bằng tài khoản %s — Bài viết: %s", snippet, displayName, postID),
 			ExecutedAt: time.Now(),
 		}
 		AddLog(logFromComment(resp, resp.Message))
@@ -527,8 +580,8 @@ func (h *ActionHandler) CommentPost(req CommentPostRequest) CommentPostResponse 
 			Success: false, Status: StatusNotEnabled,
 			Action: "comment", PostID: postID,
 			AccountID: accountID, AccountDisplayName: displayName, CommentText: commentText,
-			DryRun: false,
-			Message: "Lỗi hệ thống: fbDataStore chưa được khởi tạo.",
+			DryRun:     false,
+			Message:    "Lỗi hệ thống: fbDataStore chưa được khởi tạo.",
 			ExecutedAt: time.Now(),
 		}
 		AddLog(logFromComment(resp, resp.Message))
@@ -541,113 +594,300 @@ func (h *ActionHandler) CommentPost(req CommentPostRequest) CommentPostResponse 
 			Success: false, Status: StatusSessionInvalid,
 			Action: "comment", PostID: postID,
 			AccountID: accountID, AccountDisplayName: displayName, CommentText: commentText,
-			DryRun: false,
-			Message: "Lỗi: Không tìm thấy Cookie hoặc fb_dtsg trong FB Data của tài khoản này.",
+			DryRun:     false,
+			Message:    "Lỗi: Không tìm thấy Cookie hoặc fb_dtsg trong FB Data của tài khoản này.",
 			ExecutedAt: time.Now(),
 		}
 		AddLog(logFromComment(resp, resp.Message))
 		return resp
 	}
-	
-	// Delay chống Rate Limit — nghỉ ngẫu nhiên 3-8 giây để qua mặt bot-detector FB
-	sleepMs := 3000 + rand.Intn(5001) // 3000ms → 8000ms
-	fmt.Printf("[DELAY] Chờ %dms trước khi gửi request...\n", sleepMs)
+
+	// Delay chống Rate Limit: comment thường bị FB siết mạnh hơn post.
+	sleepMs := 5000 + rand.Intn(7001) // 5-12 giây
+	fmt.Printf("[DELAY] Chờ %dms trước khi gửi request comment...\n", sleepMs)
 	time.Sleep(time.Duration(sleepMs) * time.Millisecond)
 
-	client := &http.Client{Timeout: 15 * time.Second}
-	reqUrl := "https://www.facebook.com/api/graphql/"
+	reqURL := "https://www.facebook.com/api/graphql/"
+	docID := "25720979764242405"
 
-	// doc_id mới nhất cho Comment Create Mutation do user dâng hiến
-	docID := "27321223354145000"
-
-	// Lọc lấy c_user (UID thật) từ Cookie để làm actor_id
-	actorID := ""
-	for _, part := range strings.Split(fbData.Info.Cookie, ";") {
-		part = strings.TrimSpace(part)
-		if strings.HasPrefix(part, "c_user=") {
-			actorID = strings.TrimPrefix(part, "c_user=")
-			break
-		}
+	actorID := actorIDFromCookie(fbData.Info.Cookie)
+	if actorID == "" {
+		actorID = strings.TrimSpace(fbData.UID) // fallback
 	}
 	if actorID == "" {
-		actorID = fbData.UID // Dự phòng
-	}
-
-	variables := fmt.Sprintf(`{"input":{"client_mutation_id":"%d","actor_id":"%s","feedback_id":"%s","message":{"ranges":[],"text":"%s"}}}`,
-		time.Now().UnixNano(), actorID, postID, commentText)
-
-	data := url.Values{}
-	data.Set("doc_id", docID)
-	data.Set("fb_dtsg", fbData.Info.FbDtsg)
-	data.Set("variables", variables)
-
-	httpReq, err := http.NewRequest("POST", reqUrl, strings.NewReader(data.Encode()))
-	if err != nil {
 		resp := CommentPostResponse{
-			Success: false, Status: "error", Action: "comment", PostID: postID,
-			AccountID: accountID, AccountDisplayName: displayName, CommentText: commentText, DryRun: false,
-			Message: "Lỗi cấu trúc HTTP request", ExecutedAt: time.Now(),
-		}
-		AddLog(logFromComment(resp, resp.Message))
-		return resp
-	}
-
-	httpReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	httpReq.Header.Set("Cookie", fbData.Info.Cookie)
-	httpReq.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-	httpReq.Header.Set("Sec-Fetch-Site", "same-origin")
-	httpReq.Header.Set("X-FB-Friendly-Name", "UFI2CommentCreateMutation")
-
-	httpResp, err := client.Do(httpReq)
-	if err != nil {
-		resp := CommentPostResponse{
-			Success: false, Status: "error", Action: "comment", PostID: postID,
-			AccountID: accountID, AccountDisplayName: displayName, CommentText: commentText, DryRun: false,
-			Message: fmt.Sprintf("Lỗi mạng: %v", err), ExecutedAt: time.Now(),
-		}
-		AddLog(logFromComment(resp, resp.Message))
-		return resp
-	}
-	defer httpResp.Body.Close()
-
-	bodyBytes, _ := io.ReadAll(httpResp.Body)
-	bodyStr := string(bodyBytes)
-	fmt.Printf("\n=== GRAPHQL RAW RESP ===\n%s\n====================\n\n", bodyStr)
-
-	if httpResp.StatusCode != 200 {
-		resp := CommentPostResponse{
-			Success: false, Status: "error", Action: "comment", PostID: postID,
-			AccountID: accountID, AccountDisplayName: displayName, CommentText: commentText, DryRun: false,
-			Message: fmt.Sprintf("GraphQL Server trả về mã lỗi %d", httpResp.StatusCode),
+			Success: false, Status: StatusSessionInvalid,
+			Action: "comment", PostID: postID,
+			AccountID: accountID, AccountDisplayName: displayName, CommentText: commentText,
+			DryRun: false, Message: "Không tìm thấy actor_id (c_user) trong cookie.",
 			ExecutedAt: time.Now(),
 		}
 		AddLog(logFromComment(resp, resp.Message))
 		return resp
 	}
 
-	isSuccess := strings.Contains(bodyStr, "\"comment_create\":{")
-	
-	if !isSuccess && (strings.Contains(bodyStr, "\"errors\":[{") || strings.Contains(bodyStr, "Exception")) {
-		snippet := bodyStr
-		if len(snippet) > 80 {
-			snippet = snippet[:80] + "..."
-		}
+	sessionData, sdErr := fetchSessionData(fbData.Info.Cookie)
+	lsd := ""
+	if sdErr == nil && strings.TrimSpace(sessionData.LSD) != "" {
+		lsd = strings.TrimSpace(sessionData.LSD)
+		fmt.Printf("[INFO] Comment LSD token: %s\n", lsd)
+	} else {
+		fmt.Printf("[WARN] Comment không lấy được LSD: %v\n", sdErr)
+	}
+
+	currentDtsg := strings.TrimSpace(fbData.Info.FbDtsg)
+	if sdErr == nil && strings.TrimSpace(sessionData.DTSG) != "" {
+		currentDtsg = strings.TrimSpace(sessionData.DTSG)
+	}
+	if currentDtsg == "" {
 		resp := CommentPostResponse{
-			Success: false, Status: "error", Action: "comment", PostID: postID,
-			AccountID: accountID, AccountDisplayName: displayName, CommentText: commentText, DryRun: false,
-			Message:   fmt.Sprintf("FB GraphQL Error: %s", snippet),
+			Success: false, Status: StatusSessionInvalid,
+			Action: "comment", PostID: postID,
+			AccountID: accountID, AccountDisplayName: displayName, CommentText: commentText,
+			DryRun: false, Message: "Không có fb_dtsg hợp lệ để gửi comment.",
 			ExecutedAt: time.Now(),
 		}
 		AddLog(logFromComment(resp, resp.Message))
 		return resp
 	}
 
+	doCommentGraphQL := func(fbDtsg, lsdToken string) (int, string, error) {
+		clientMutationID := fmt.Sprintf("%d", time.Now().UnixNano()%100000)
+		idempotenceToken := "client:" + generateToken()
+		sessionID := generateToken()
+		attribution := fmt.Sprintf(
+			"CometSinglePostDialogRoot.react,comet.post.single_dialog,via_cold_start,%d,%d,,,",
+			time.Now().UnixMilli(),
+			time.Now().UnixNano()%1000000,
+		)
+
+		variablesMap := map[string]interface{}{
+			"feedLocation":   "POST_PERMALINK_DIALOG",
+			"feedbackSource": 2,
+			"groupID":        nil,
+			"input": map[string]interface{}{
+				"actor_id":           actorID,
+				"client_mutation_id": clientMutationID,
+				"attachments":        nil,
+				"feedback_id":        postID,
+				"formatting_style":   nil,
+				"message": map[string]interface{}{
+					"ranges": []interface{}{},
+					"text":   commentText,
+				},
+				"reply_target_clicked":  false,
+				"attribution_id_v2":     attribution,
+				"vod_video_timestamp":   nil,
+				"feedback_referrer":     "/",
+				"is_tracking_encrypted": true,
+				"tracking":              []string{},
+				"feedback_source":       "OBJECT",
+				"idempotence_token":     idempotenceToken,
+				"session_id":            sessionID,
+			},
+			"inviteShortLinkKey": nil,
+			"renderLocation":     nil,
+			"scale":              1,
+			"useDefaultActor":    false,
+			"focusCommentID":     nil,
+			"__relay_internal__pv__groups_comet_use_glvrelayprovider":                      false,
+			"__relay_internal__pv__CometUFICommentActionLinksRewriteEnabledrelayprovider":  false,
+			"__relay_internal__pv__CometUFICommentAvatarStickerAnimatedImagerelayprovider": false,
+			"__relay_internal__pv__IsWorkUserrelayprovider":                                false,
+			"__relay_internal__pv__CometUFICommentAutoTranslationTyperelayprovider":        "ORIGINAL",
+		}
+		variablesBytes, _ := json.Marshal(variablesMap)
+		variables := string(variablesBytes)
+
+		fd := url.Values{}
+		fd.Set("doc_id", docID)
+		fd.Set("av", actorID)
+		fd.Set("__aaid", "0")
+		fd.Set("__user", actorID)
+		fd.Set("__a", "1")
+		fd.Set("__req", "4d")
+		fd.Set("dpr", "1")
+		fd.Set("__ccg", "EXCELLENT")
+		if strings.TrimSpace(sessionData.Rev) != "" {
+			fd.Set("__rev", strings.TrimSpace(sessionData.Rev))
+		}
+		if strings.TrimSpace(sessionData.HSI) != "" {
+			fd.Set("__hsi", strings.TrimSpace(sessionData.HSI))
+		}
+		fd.Set("fb_dtsg", fbDtsg)
+		fd.Set("jazoest", calcJazoest(fbDtsg))
+		fd.Set("variables", variables)
+		if lsdToken != "" {
+			fd.Set("lsd", lsdToken)
+		}
+		if strings.TrimSpace(sessionData.SpinR) != "" {
+			fd.Set("__spin_r", strings.TrimSpace(sessionData.SpinR))
+		}
+		fd.Set("__spin_b", "trunk")
+		if strings.TrimSpace(sessionData.SpinT) != "" {
+			fd.Set("__spin_t", strings.TrimSpace(sessionData.SpinT))
+		}
+		fd.Set("fb_api_caller_class", "RelayModern")
+		fd.Set("fb_api_req_friendly_name", "useCometUFICreateCommentMutation")
+		fd.Set("server_timestamps", "true")
+		fd.Set("__comet_req", "15")
+
+		httpReq, err := http.NewRequest("POST", reqURL, strings.NewReader(fd.Encode()))
+		if err != nil {
+			return 0, "", err
+		}
+		httpReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		httpReq.Header.Set("Cookie", fbData.Info.Cookie)
+		httpReq.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+		httpReq.Header.Set("Origin", "https://www.facebook.com")
+		httpReq.Header.Set("Referer", "https://www.facebook.com/")
+		httpReq.Header.Set("Accept", "*/*")
+		httpReq.Header.Set("Sec-Fetch-Site", "same-origin")
+		httpReq.Header.Set("Sec-Fetch-Mode", "cors")
+		httpReq.Header.Set("Sec-Fetch-Dest", "empty")
+		httpReq.Header.Set("X-FB-Friendly-Name", "useCometUFICreateCommentMutation")
+		if lsdToken != "" {
+			httpReq.Header.Set("X-FB-LSD", lsdToken)
+		}
+		httpReq.Header.Set("X-ASBD-ID", "129477")
+
+		client := &http.Client{Timeout: 30 * time.Second}
+		httpResp, err := client.Do(httpReq)
+		if err != nil {
+			return 0, "", err
+		}
+		defer httpResp.Body.Close()
+		bodyBytes, _ := io.ReadAll(httpResp.Body)
+		return httpResp.StatusCode, string(bodyBytes), nil
+	}
+
+	status1, body1, err := doCommentGraphQL(currentDtsg, lsd)
+	if err != nil {
+		resp := CommentPostResponse{
+			Success: false, Status: "error", Action: "comment", PostID: postID,
+			AccountID: accountID, AccountDisplayName: displayName, CommentText: commentText, DryRun: false,
+			Message: fmt.Sprintf("Lỗi mạng khi gửi comment: %v", err), ExecutedAt: time.Now(),
+		}
+		AddLog(logFromComment(resp, resp.Message))
+		return resp
+	}
+
+	fmt.Printf("\n=== GRAPHQL RAW RESP (Comment Attempt 1) ===\n%s\n====================\n\n", body1)
+
+	if status1 != 200 {
+		resp := CommentPostResponse{
+			Success: false, Status: "error", Action: "comment", PostID: postID,
+			AccountID: accountID, AccountDisplayName: displayName, CommentText: commentText, DryRun: false,
+			Message:    fmt.Sprintf("GraphQL Server trả về mã lỗi %d", status1),
+			ExecutedAt: time.Now(),
+		}
+		AddLog(logFromComment(resp, resp.Message))
+		return resp
+	}
+	if strings.Contains(body1, `"error":1357001`) || strings.Contains(body1, `"error":1357004`) {
+		resp := CommentPostResponse{
+			Success: false, Status: StatusSessionInvalid,
+			Action: "comment", PostID: postID,
+			AccountID: accountID, AccountDisplayName: displayName, CommentText: commentText,
+			DryRun:     false,
+			Message:    "Facebook trả về lỗi đăng nhập (1357001/1357004). Cookie hoặc fb_dtsg không còn hợp lệ/không đồng bộ với phiên hiện tại.",
+			ExecutedAt: time.Now(),
+		}
+		AddLog(logFromComment(resp, resp.Message))
+		return resp
+	}
+
+	if strings.Contains(body1, `"comment_create":{`) {
+		resp := CommentPostResponse{
+			Success: true, Status: StatusSuccess,
+			Action: "comment", PostID: postID,
+			AccountID: accountID, AccountDisplayName: displayName, CommentText: commentText,
+			DryRun:     false,
+			Message:    "Real Run: Gửi payload GraphQL comment thành công!",
+			ExecutedAt: time.Now(),
+		}
+		AddLog(logFromComment(resp, resp.Message))
+		return resp
+	}
+
+	if strings.Contains(body1, `"code":1675004`) {
+		backoffMs := 15000 + rand.Intn(15001) // 15-30 giây
+		fmt.Printf("[DELAY] Rate limit comment (1675004), chờ %dms rồi thử lại...\n", backoffMs)
+		time.Sleep(time.Duration(backoffMs) * time.Millisecond)
+
+		// Làm mới token trước khi retry.
+		if refreshed, rErr := fetchSessionData(fbData.Info.Cookie); rErr == nil {
+			if strings.TrimSpace(refreshed.LSD) != "" {
+				lsd = strings.TrimSpace(refreshed.LSD)
+			}
+			if strings.TrimSpace(refreshed.DTSG) != "" {
+				currentDtsg = strings.TrimSpace(refreshed.DTSG)
+			}
+		}
+
+		_, body2, err2 := doCommentGraphQL(currentDtsg, lsd)
+		if err2 != nil {
+			resp := CommentPostResponse{
+				Success: false, Status: "error", Action: "comment", PostID: postID,
+				AccountID: accountID, AccountDisplayName: displayName, CommentText: commentText, DryRun: false,
+				Message:    fmt.Sprintf("Rate limit và retry lỗi mạng: %v", err2),
+				ExecutedAt: time.Now(),
+			}
+			AddLog(logFromComment(resp, resp.Message))
+			return resp
+		}
+
+		fmt.Printf("\n=== GRAPHQL RAW RESP (Comment Attempt 2) ===\n%s\n====================\n\n", body2)
+		if strings.Contains(body2, `"comment_create":{`) {
+			resp := CommentPostResponse{
+				Success: true, Status: StatusSuccess,
+				Action: "comment", PostID: postID,
+				AccountID: accountID, AccountDisplayName: displayName, CommentText: commentText,
+				DryRun:     false,
+				Message:    "Retry sau rate limit: comment thành công.",
+				ExecutedAt: time.Now(),
+			}
+			AddLog(logFromComment(resp, resp.Message))
+			return resp
+		}
+
+		resp := CommentPostResponse{
+			Success: false, Status: "error", Action: "comment", PostID: postID,
+			AccountID: accountID, AccountDisplayName: displayName, CommentText: commentText, DryRun: false,
+			Message:    "Facebook đang giới hạn bình luận (code 1675004). Hãy tăng delay và thử lại sau.",
+			ExecutedAt: time.Now(),
+		}
+		AddLog(logFromComment(resp, resp.Message))
+		return resp
+	}
+
+	// Nếu FB trả về dtsgToken mới trong lỗi, thử lại 1 lần.
+	freshDtsg := extractDtsgFromError(body1)
+	if freshDtsg != "" {
+		time.Sleep(1200 * time.Millisecond)
+		_, body2, err2 := doCommentGraphQL(freshDtsg, lsd)
+		if err2 == nil && strings.Contains(body2, `"comment_create":{`) {
+			resp := CommentPostResponse{
+				Success: true, Status: StatusSuccess,
+				Action: "comment", PostID: postID,
+				AccountID: accountID, AccountDisplayName: displayName, CommentText: commentText,
+				DryRun:     false,
+				Message:    "Retry với dtsgToken mới: comment thành công.",
+				ExecutedAt: time.Now(),
+			}
+			AddLog(logFromComment(resp, resp.Message))
+			return resp
+		}
+	}
+
+	snippet := body1
+	if len(snippet) > 220 {
+		snippet = snippet[:220] + "..."
+	}
 	resp := CommentPostResponse{
-		Success: true, Status: StatusSuccess,
-		Action: "comment", PostID: postID,
-		AccountID: accountID, AccountDisplayName: displayName, CommentText: commentText,
-		DryRun: false,
-		Message: "Real Run: Gửi payload GraphQl Comment thành công!",
+		Success: false, Status: "error", Action: "comment", PostID: postID,
+		AccountID: accountID, AccountDisplayName: displayName, CommentText: commentText, DryRun: false,
+		Message:    fmt.Sprintf("FB GraphQL Error: %s", snippet),
 		ExecutedAt: time.Now(),
 	}
 	AddLog(logFromComment(resp, resp.Message))
@@ -755,8 +995,8 @@ func (h *ActionHandler) CreatePost(req CreatePostRequest) CreatePostResponse {
 			resp := CreatePostResponse{
 				Success: false, Status: StatusValidationError,
 				Action: "create_post", AccountID: accountID, PostText: postText,
-				DryRun: req.DryRun,
-				Message: fmt.Sprintf("Tài khoản '%s' không tìm thấy trong local store.", accountID),
+				DryRun:     req.DryRun,
+				Message:    fmt.Sprintf("Tài khoản '%s' không tìm thấy trong local store.", accountID),
 				ExecutedAt: now,
 			}
 			AddLog(logFromPost(resp, "Tài khoản không tồn tại"))
@@ -776,8 +1016,8 @@ func (h *ActionHandler) CreatePost(req CreatePostRequest) CreatePostResponse {
 		resp := CreatePostResponse{
 			Success: false, Status: StatusSessionInvalid,
 			Action: "create_post", AccountID: accountID, AccountDisplayName: displayName, PostText: postText,
-			DryRun: req.DryRun,
-			Message: fmt.Sprintf("Phiên của tài khoản '%s' không hợp lệ (trạng thái: %s).", displayName, sessionStatusStr),
+			DryRun:     req.DryRun,
+			Message:    fmt.Sprintf("Phiên của tài khoản '%s' không hợp lệ (trạng thái: %s).", displayName, sessionStatusStr),
 			ExecutedAt: now,
 		}
 		AddLog(logFromPost(resp, resp.Message))
@@ -796,8 +1036,8 @@ func (h *ActionHandler) CreatePost(req CreatePostRequest) CreatePostResponse {
 		resp := CreatePostResponse{
 			Success: true, Status: StatusSuccess,
 			Action: "create_post", AccountID: accountID, AccountDisplayName: displayName, PostText: postText,
-			DryRun: true,
-			Message: fmt.Sprintf("[DRY RUN] Đã đăng bài nháp: \"%s\" bằng tài khoản %s", snippet, displayName),
+			DryRun:     true,
+			Message:    fmt.Sprintf("[DRY RUN] Đã đăng bài nháp: \"%s\" bằng tài khoản %s", snippet, displayName),
 			ExecutedAt: time.Now(),
 		}
 		AddLog(logFromPost(resp, resp.Message))
@@ -825,8 +1065,8 @@ func (h *ActionHandler) CreatePost(req CreatePostRequest) CreatePostResponse {
 		resp := CreatePostResponse{
 			Success: false, Status: StatusSessionInvalid,
 			Action: "create_post", AccountID: accountID, AccountDisplayName: displayName, PostText: postText,
-			DryRun: false,
-			Message: fmt.Sprintf("Lỗi: %s - Không tìm thấy dữ liệu FB (Cookie/fb_dtsg). Cập nhật vào facebook_data.json!", err),
+			DryRun:     false,
+			Message:    fmt.Sprintf("Lỗi: %s - Không tìm thấy dữ liệu FB (Cookie/fb_dtsg). Cập nhật vào facebook_data.json!", err),
 			ExecutedAt: time.Now(),
 		}
 		AddLog(logFromPost(resp, resp.Message))
@@ -1113,4 +1353,3 @@ func (h *ActionHandler) CreatePost(req CreatePostRequest) CreatePostResponse {
 	AddLog(logFromPost(resp, resp.Message))
 	return resp
 }
-

@@ -5,6 +5,8 @@ import Overview from './pages/Overview.vue'
 import Jobs from './pages/Jobs.vue'
 import Settings from './pages/Settings.vue'
 import ActionLikeTest from './pages/ActionLikeTest.vue'
+import ActionCommentTest from './pages/ActionCommentTest.vue'
+import ActionPostTest from './pages/ActionPostTest.vue'
 import Accounts from './pages/Accounts.vue'
 
 // Basic routing state
@@ -23,6 +25,8 @@ provide('navigate', (route: string) => {
     <Jobs v-if="currentRoute === 'tasks'" />
     <Settings v-if="currentRoute === 'settings'" />
     <ActionLikeTest v-if="currentRoute === 'action-like-test'" />
+    <ActionCommentTest v-if="currentRoute === 'action-comment-test'" />
+    <ActionPostTest v-if="currentRoute === 'action-post-test'" />
     <Accounts v-if="currentRoute === 'accounts'" />
   </AppShell>
 </template>
