@@ -262,12 +262,26 @@ func executeReactionRequest(cookie, fbDtsg, actorID, variablesJSON string, strat
 
 	log.Printf("[Executor] strategy=%s status=%d body=%s", strategy.name, resp.StatusCode, truncateStr(bodyNoGuard, 220))
 
-	if strings.Contains(bodyNoGuard, `"error":1357032`) {
-		return bodyNoGuard, ErrStaleContext, errors.New("fb_dtsg hoac session da het han (error 1357032)")
+	if strings.Contains(bodyNoGuard, `"error":1357032`) || strings.Contains(bodyNoGuard, `"error":1357001`) {
+		return bodyNoGuard, ErrStaleContext, errors.New("fb_dtsg hoac session da het han (error 1357032 / 1357001)")
 	}
 	if isIncorrectQuery(bodyNoGuard) {
 		return bodyNoGuard, ErrGraphqlFB, fmt.Errorf("incorrect query (%s)", strategy.name)
 	}
+
+	var parsedResp struct {
+		Data *struct {
+			FeedbackReact interface{} `json:"feedback_react"`
+		} `json:"data"`
+		Errors []interface{} `json:"errors"`
+	}
+
+	if err := json.Unmarshal([]byte(bodyNoGuard), &parsedResp); err == nil {
+		if parsedResp.Data != nil && parsedResp.Data.FeedbackReact != nil {
+			return bodyNoGuard, "", nil
+		}
+	}
+
 	if strings.Contains(bodyNoGuard, `"errors":`) {
 		return bodyNoGuard, ErrGraphqlFB, fmt.Errorf("graphql errors (%s): %s", strategy.name, truncateStr(bodyNoGuard, 260))
 	}

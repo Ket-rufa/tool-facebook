@@ -10,7 +10,7 @@ import type { ActionResponse, SessionStatus, ActionLog, ActionRequest } from '..
 
 const isLoading = ref(false)
 const sessionInfo = ref<SessionStatus | null>(null)
-const latestResult = ref<ActionResponse | null>(null)
+const latestResults = ref<ActionResponse[]>([])
 const logs = ref<ActionLog[]>([])
 
 const loadData = async () => {
@@ -28,13 +28,12 @@ const loadData = async () => {
 
 const handleTestLike = async (payloads: ActionRequest[]) => {
   isLoading.value = true
-  latestResult.value = null
+  latestResults.value = []
   
   try {
-    for (const payload of payloads) {
-      const res = await actionsService.likePost(payload)
-      latestResult.value = res // Show the latest result conceptually, or update it per tick
-    }
+    const promises = payloads.map(payload => actionsService.likePost(payload))
+    const results = await Promise.all(promises)
+    latestResults.value = results
   } catch (error) {
     console.error('Test Action error', error)
   } finally {
@@ -74,8 +73,10 @@ onMounted(() => {
           @updateAccount="handleAccountUpdate"
         />
         
-        <div v-show="latestResult" class="result-wrapper">
-          <ActionResultCard :result="latestResult" />
+        <div v-if="latestResults.length > 0" class="results-container">
+          <div v-for="(res, idx) in latestResults" :key="idx" class="result-wrapper">
+            <ActionResultCard :result="res" />
+          </div>
         </div>
       </div>
 
@@ -131,6 +132,12 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   gap: 24px;
+}
+
+.results-container {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
 }
 
 .result-wrapper {
