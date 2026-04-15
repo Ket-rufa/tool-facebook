@@ -373,7 +373,7 @@ const handleSubmit = async () => {
           class="btn btn-primary btn-lg w-full"
         >
           <span class="spinner" v-if="isLoading"></span>
-          {{ isLoading ? 'Đang gửi...' : 'Thử gửi cảm xúc' }}
+          {{ isLoading ? 'Đang gửi...' : 'Chạy tương tác' }}
         </button>
       </div>
     </div>
