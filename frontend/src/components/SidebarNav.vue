@@ -9,6 +9,7 @@ const navigate = inject('navigate') as (route: string) => void
 const navItems = [
   { id: 'overview', label: 'Tổng quan', icon: icons.grid },
   { id: 'tasks', label: 'Quét thông tin', icon: icons.repeat },
+  { id: 'friend-scraper', label: 'Quét bạn bè', icon: icons.users },
   { id: 'post-scraper', label: 'Quét bài viết', icon: icons.fileText },
   { id: 'accounts', label: 'Tài khoản', icon: icons.users },
   { id: 'action-like-test', label: 'Tương tác bài viết', icon: icons.thumbsUp },

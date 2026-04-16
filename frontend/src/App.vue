@@ -9,6 +9,7 @@ import ActionLikeTest from './pages/ActionLikeTest.vue'
 import ActionCommentTest from './pages/ActionCommentTest.vue'
 import ActionPostTest from './pages/ActionPostTest.vue'
 import Accounts from './pages/Accounts.vue'
+import FriendScraper from './pages/FriendScraper.vue'
 
 // Basic routing state
 const currentRoute = ref('overview')
@@ -30,6 +31,7 @@ provide('navigate', (route: string) => {
     <ActionCommentTest v-if="currentRoute === 'action-comment-test'" />
     <ActionPostTest v-if="currentRoute === 'action-post-test'" />
     <Accounts v-if="currentRoute === 'accounts'" />
+    <FriendScraper v-if="currentRoute === 'friend-scraper'" />
   </AppShell>
 </template>
 
