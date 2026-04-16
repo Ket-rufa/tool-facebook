@@ -485,7 +485,16 @@ func (h *CrawlHandler) ExtractMedia(m interface{}) []string {
 	var urls []string
 	seen := make(map[string]bool)
 
-	blacklist := []string{"p40x40", "p32x32", "p24x24", "p50x50", "p16x16", "s50x50", "s32x32", "s40x40", "_s50x", "_s40x", "_s32x", "t39.30808"}
+	// Danh sách suffix/path của ảnh nhỏ (avatar, icon reaction, emoji)
+	// QUAN TRỌNG: t39.30808-1 là avatar/profile pic, t39.30808-6 là ảnh bài viết!
+	blacklist := []string{
+		"p40x40", "p32x32", "p24x24", "p50x50", "p16x16",
+		"s50x50", "s32x32", "s40x40", "s16x16",
+		"_s50x", "_s40x", "_s32x", "_s16x",
+		"t39.30808-1", // avatar/profile picture (KHÔNG phải t39.30808 để không block ảnh bài viết -6, -9...)
+		"/emoji.php",  // emoji images
+		"p180x180", "p100x100", "p75x75", "p60x60",
+	}
 
 	addURL := func(uri string) {
 		if !seen[uri] && strings.Contains(uri, "scontent") {
@@ -499,31 +508,56 @@ func (h *CrawlHandler) ExtractMedia(m interface{}) []string {
 		}
 	}
 
-	var findInMedia func(data interface{})
-	findInMedia = func(data interface{}) {
+	// Thực hiện DFS toàn bộ subtree — an toàn vì chỉ được gọi
+	// từ các key attachment/media đã được cô lập khỏi header/feedback
+	var fullDFS func(data interface{}, depth int)
+	fullDFS = func(data interface{}, depth int) {
+		if depth > 20 { return } // tránh đệ quy vô hạn
 		switch v := data.(type) {
 		case map[string]interface{}:
+			// Nếu node này là User/Page/Actor thì bỏ qua (tránh avatar người comment)
+			if typename, ok := v["__typename"].(string); ok {
+				switch typename {
+				case "User", "Page", "Group", "CometAnimatedReactionIconRenderer",
+					"CometUFIActorPhotoType", "Actor":
+					return
+				}
+			}
 			if uri, ok := v["uri"].(string); ok {
 				addURL(uri)
 			}
-			// Chỉ đi sâu vào các key có thể chứa media thật sự
-			for _, key := range []string{"image", "large_image", "photo_image", "full_image", "media", "thumbnail", "attachments", "style_infos", "story", "attached_story"} {
-				if child, ok := v[key]; ok {
-					findInMedia(child)
+			// Bỏ qua các key chứa thông tin người dùng / phản ứng
+			skipKeys := map[string]bool{
+				"actors": true, "actor": true,
+				"profile_picture": true, "profile_picture_depth_0": true,
+				"profile_picture_depth_1": true, "actor_photo": true,
+				"icon_image": true, "extensions": true,
+				"comet_ufi_reaction_icon_renderer": true,
+				"vote_attachments": true,
+				"feedback": true, "story_ufi_container": true,
+			}
+			for key, val := range v {
+				if !skipKeys[key] {
+					fullDFS(val, depth+1)
 				}
 			}
 		case []interface{}:
 			for _, val := range v {
-				findInMedia(val)
+				fullDFS(val, depth+1)
 			}
 		}
 	}
 
-	// Chỉ bắt đầu từ các key an toàn ở root của edge node
+	// Chỉ bắt đầu DFS từ các zone an toàn chứa attachment của bài viết
+	// (không bắt đầu từ root để tránh lấy ảnh từ feedback/reactions)
+	entryKeys := []string{
+		"attachments", "comet_sections", "attached_story",
+		"media", "photo", "photos", "subattachments",
+	}
 	if node, ok := m.(map[string]interface{}); ok {
-		for _, key := range []string{"attachments", "comet_sections", "attached_story", "media"} {
+		for _, key := range entryKeys {
 			if child, ok := node[key]; ok {
-				findInMedia(child)
+				fullDFS(child, 0)
 			}
 		}
 	}

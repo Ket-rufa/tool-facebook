@@ -1682,8 +1682,10 @@ func (h *ActionHandler) CreatePost(req CreatePostRequest) CreatePostResponse {
 	// Uu tien doc_id moi (user capture thanh cong), sau do den doc_id cu de fallback.
 	// Neu user set doc_id trong settings thi van duoc uu tien.
 	preferredCreateDocIDs := []string{
-		"26400547339631027", // payload user capture thanh cong
-		"27581837698072404", // fallback cu
+		"8508448842550728",  // doc_id mới nhất (2025-04)
+		"7993695614062380",  // doc_id mới (2025-Q1)
+		"26400547339631027", // doc_id user đã capture thành công (cũ hơn)
+		"27581837698072404", // fallback cũ
 	}
 	docIDCandidates := make([]string, 0, 3)
 	seenDocID := make(map[string]struct{})
@@ -1800,7 +1802,7 @@ func (h *ActionHandler) CreatePost(req CreatePostRequest) CreatePostResponse {
 			`"__relay_internal__pv__GHLShouldUseSponsoredAuctionLabelFieldNameV1relayprovider":false,`+
 			`"__relay_internal__pv__GHLShouldUseSponsoredAuctionLabelFieldNameV2relayprovider":false`+
 			`}`,
-			JsonStr(idempotenceToken), attachmentsJSON, messageField, JsonStr(composerSessionID), JsonStr(ActorIDFromCookie(actorID)))
+			JsonStr(idempotenceToken), attachmentsJSON, messageField, JsonStr(composerSessionID), JsonStr(actorID))
 	}
 
 	// Lấy LSD token (cần thiết cho Comet GraphQL endpoint)
@@ -2073,7 +2075,7 @@ func (h *ActionHandler) CreatePost(req CreatePostRequest) CreatePostResponse {
 	}
 
 	// Neu van 1357010, thu doc_id khac (payload user capture thanh cong la 26400547339631027).
-	if hasGraphQLErrorCode(body1, "1357010") && len(docIDCandidates) > 1 {
+	if (hasGraphQLErrorCode(body1, "1357010") || hasGraphQLErrorCode(body1, "1675030")) && len(docIDCandidates) > 1 {
 		for d := 1; d < len(docIDCandidates); d++ {
 			currentDocID = docIDCandidates[d]
 			fmt.Printf("[WARN] GraphQL code 1357010. Retry with another doc_id=%s\n", currentDocID)
@@ -2152,7 +2154,7 @@ func (h *ActionHandler) CreatePost(req CreatePostRequest) CreatePostResponse {
 			status1 = statusDoc
 			body1 = bodyDoc
 			snippet1 = snippetDoc
-			if !hasGraphQLErrorCode(body1, "1357010") {
+			if !hasGraphQLErrorCode(body1, "1357010") && !hasGraphQLErrorCode(body1, "1675030") {
 				break
 			}
 		}
