@@ -3,6 +3,7 @@ import { ref, computed, watch, onMounted } from 'vue'
 import type { CommentRequest } from '../../types/action'
 import { icons } from '../../utils/icons'
 import { ListAccounts } from '../../../wailsjs/go/accounts/AccountService'
+import { GetCommentDocID, UpdateCommentDocID } from '../../../wailsjs/go/actiontest/ActionHandler'
 import type { accounts } from '../../../wailsjs/go/models'
 
 const props = defineProps<{
@@ -23,6 +24,12 @@ const postId = ref('')
 const commentList = ref('')
 const dryRun = ref(true)
 const validationError = ref('')
+
+// Doc ID
+const commentDocID = ref('')
+const docIDInput = ref('')
+const docIDSaving = ref(false)
+const docIDMessage = ref('')
 
 // ── Load accounts thật từ backend ─────────────────────────────────────
 async function loadAccounts() {
@@ -47,8 +54,34 @@ async function loadAccounts() {
   }
 }
 
+async function loadCommentDocID() {
+  try {
+    const id = await GetCommentDocID()
+    commentDocID.value = id || ''
+    docIDInput.value = id || ''
+  } catch (e) {
+    console.error('Loi tai comment doc_id:', e)
+  }
+}
+
+async function saveCommentDocID() {
+  docIDSaving.value = true
+  docIDMessage.value = ''
+  try {
+    const saved = await UpdateCommentDocID(docIDInput.value.trim())
+    commentDocID.value = saved
+    docIDMessage.value = saved ? 'Đã lưu doc_id: ' + saved : 'Đã xóa doc_id — dùng mặc định'
+  } catch (e: any) {
+    docIDMessage.value = 'Lỗi: ' + (e?.message || String(e))
+  } finally {
+    docIDSaving.value = false
+    setTimeout(() => { docIDMessage.value = '' }, 4000)
+  }
+}
+
 onMounted(() => {
   loadAccounts()
+  loadCommentDocID()
 })
 
 watch(selectedAccounts, (newVal) => {
@@ -205,6 +238,31 @@ const handleSubmit = () => {
           placeholder="VD: FB_982129"
           :disabled="isLoading"
         />
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">GraphQL Doc ID (Real Run)</label>
+        <div class="docid-row">
+          <input
+            v-model="docIDInput"
+            type="text"
+            class="form-input"
+            placeholder="VD: 25720979764242405"
+            :disabled="isLoading || docIDSaving"
+            @keydown.enter.prevent="saveCommentDocID"
+          />
+          <button type="button" class="btn btn-outline btn-docid" :disabled="isLoading || docIDSaving" @click="saveCommentDocID">
+            {{ docIDSaving ? 'Đang lưu...' : 'Lưu' }}
+          </button>
+          <button type="button" class="btn btn-link btn-docid" :disabled="isLoading || docIDSaving"
+            @click="docIDInput = ''; saveCommentDocID()">
+            Xóa
+          </button>
+        </div>
+        <div class="docid-hint">Lưu cục bộ để Real Run dùng tự động. Lấy từ F12 → Network → useCometUFICreateCommentMutation → doc_id.</div>
+        <div v-if="docIDMessage" class="docid-msg" :class="docIDMessage.startsWith('Lỗi') ? 'msg-error' : 'msg-ok'">
+          {{ docIDMessage }}
+        </div>
       </div>
 
       <div class="form-group mt-4">
@@ -389,6 +447,44 @@ const handleSubmit = () => {
 .mt-4 { margin-top: 24px; }
 .mb-2 { margin-bottom: 8px; }
 .text-xs { font-size: 12px; }
+
+.docid-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.btn-docid {
+  height: 40px;
+  white-space: nowrap;
+}
+
+.btn-link {
+  background: transparent;
+  border: none;
+  color: var(--c-danger, #dc2626);
+  font-size: 13px;
+  font-weight: 600;
+  padding: 8px 10px;
+  cursor: pointer;
+}
+.btn-link:not(:disabled):hover { text-decoration: underline; }
+
+.docid-hint {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--c-text-muted);
+}
+
+.docid-msg {
+  margin-top: 8px;
+  padding: 7px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  font-weight: 600;
+}
+.msg-ok  { background: #ecfdf5; color: #065f46; border: 1px solid #a7f3d0; }
+.msg-error { background: #fee2e2; color: #991b1b; border: 1px solid #fca5a5; }
 
 .comment-stats {
   margin-top: 8px;

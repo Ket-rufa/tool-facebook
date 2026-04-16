@@ -14,6 +14,10 @@ export function GetActionLogs() {
   return window['go']['actiontest']['ActionHandler']['GetActionLogs']();
 }
 
+export function GetCommentDocID() {
+  return window['go']['actiontest']['ActionHandler']['GetCommentDocID']();
+}
+
 export function GetCreatePostDocID() {
   return window['go']['actiontest']['ActionHandler']['GetCreatePostDocID']();
 }
@@ -22,8 +26,16 @@ export function GetReactDocID() {
   return window['go']['actiontest']['ActionHandler']['GetReactDocID']();
 }
 
+export function GetScrapeDocID() {
+  return window['go']['actiontest']['ActionHandler']['GetScrapeDocID']();
+}
+
 export function LikePost(arg1) {
   return window['go']['actiontest']['ActionHandler']['LikePost'](arg1);
+}
+
+export function UpdateCommentDocID(arg1) {
+  return window['go']['actiontest']['ActionHandler']['UpdateCommentDocID'](arg1);
 }
 
 export function UpdateCreatePostDocID(arg1) {
@@ -32,4 +44,8 @@ export function UpdateCreatePostDocID(arg1) {
 
 export function UpdateReactDocID(arg1) {
   return window['go']['actiontest']['ActionHandler']['UpdateReactDocID'](arg1);
+}
+
+export function UpdateScrapeDocID(arg1) {
+  return window['go']['actiontest']['ActionHandler']['UpdateScrapeDocID'](arg1);
 }

@@ -8,12 +8,20 @@ export function CreatePost(arg1:actiontest.CreatePostRequest):Promise<actiontest
 
 export function GetActionLogs():Promise<Array<actiontest.ActionLog>>;
 
+export function GetCommentDocID():Promise<string>;
+
 export function GetCreatePostDocID():Promise<string>;
 
 export function GetReactDocID():Promise<string>;
 
+export function GetScrapeDocID():Promise<string>;
+
 export function LikePost(arg1:actiontest.LikePostRequest):Promise<actiontest.LikePostResponse>;
+
+export function UpdateCommentDocID(arg1:string):Promise<string>;
 
 export function UpdateCreatePostDocID(arg1:string):Promise<string>;
 
 export function UpdateReactDocID(arg1:string):Promise<string>;
+
+export function UpdateScrapeDocID(arg1:string):Promise<string>;

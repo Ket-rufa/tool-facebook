@@ -2,6 +2,7 @@
 import { ref, onMounted } from 'vue'
 import { crawlService } from '../services/crawlService'
 import { ListAccounts } from '../../wailsjs/go/accounts/AccountService'
+import { GetScrapeDocID, UpdateScrapeDocID } from '../../wailsjs/go/actiontest/ActionHandler'
 import { crawl, accounts } from '../../wailsjs/go/models'
 
 const targetType = ref('profile')
@@ -14,6 +15,12 @@ const message = ref('')
 const results = ref<any[]>([]) // Dùng any để tránh lỗi TS khi model chưa cập nhật kịp
 const availableAccounts = ref<accounts.AccountProfile[]>([])
 
+// Scrape DocID
+const scrapeDocID = ref('')
+const scrapeDocIDInput = ref('')
+const scrapeDocIDSaving = ref(false)
+const scrapeDocIDMessage = ref('')
+
 onMounted(async () => {
   try {
     const list = await ListAccounts()
@@ -24,7 +31,31 @@ onMounted(async () => {
   } catch (error) {
     console.error("Lỗi khi tải danh sách tài khoản", error)
   }
+
+  // Load scrape docID
+  try {
+    const id = await GetScrapeDocID()
+    scrapeDocID.value = id || ''
+    scrapeDocIDInput.value = id || ''
+  } catch (e) {
+    console.error('Loi tai scrape doc_id:', e)
+  }
 })
+
+async function saveScrapeDocID() {
+  scrapeDocIDSaving.value = true
+  scrapeDocIDMessage.value = ''
+  try {
+    const saved = await UpdateScrapeDocID(scrapeDocIDInput.value.trim())
+    scrapeDocID.value = saved
+    scrapeDocIDMessage.value = saved ? 'Đã lưu doc_id: ' + saved : 'Đã xóa doc_id — dùng mặc định'
+  } catch (e: any) {
+    scrapeDocIDMessage.value = 'Lỗi: ' + (e?.message || String(e))
+  } finally {
+    scrapeDocIDSaving.value = false
+    setTimeout(() => { scrapeDocIDMessage.value = '' }, 4000)
+  }
+}
 
 const handleCrawl = async () => {
   let finalTarget = targetId.value.trim()
@@ -152,6 +183,34 @@ const handleCrawl = async () => {
           </div>
         </div>
         
+        <!-- DocID Config -->
+        <div class="docid-section">
+          <div class="docid-label">GraphQL Doc ID (Quét bài viết)</div>
+          <div class="docid-row">
+            <input
+              type="text"
+              v-model="scrapeDocIDInput"
+              class="docid-input"
+              placeholder="VD: 7040843045966411 (lấy từ F12 → ProfileCometTimelineFeed)"
+              :disabled="loading || scrapeDocIDSaving"
+              @keydown.enter.prevent="saveScrapeDocID"
+            />
+            <button class="btn-docid-save" :disabled="loading || scrapeDocIDSaving" @click="saveScrapeDocID">
+              {{ scrapeDocIDSaving ? 'Đang lưu...' : 'Lưu' }}
+            </button>
+            <button class="btn-docid-clear" :disabled="loading || scrapeDocIDSaving"
+              @click="scrapeDocIDInput = ''; saveScrapeDocID()">
+              Xóa
+            </button>
+          </div>
+          <div v-if="scrapeDocIDMessage" class="docid-msg" :class="scrapeDocIDMessage.startsWith('Lỗi') ? 'msg-error' : 'msg-ok'">
+            {{ scrapeDocIDMessage }}
+          </div>
+          <div v-else class="docid-hint">
+            {{ scrapeDocID ? '✅ Doc ID hiện tại: ' + scrapeDocID : '⚠️ Chưa cấu hình — dùng doc_id mặc định có sẵn.' }}
+          </div>
+        </div>
+
         <p v-if="message" class="status-msg" :class="{ error: message.includes('Lỗi') || message.includes('Vui lòng') }">{{ message }}</p>
       </div>
     </div>
@@ -348,4 +407,76 @@ const handleCrawl = async () => {
   color: #9ca3af;
   font-style: italic;
 }
+/* Scrape DocID */
+.docid-section {
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  border-left: 3px solid #f59e0b;
+  border-radius: 6px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.docid-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: #92400e;
+}
+.docid-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.docid-input {
+  flex: 1;
+  padding: 9px 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 13px;
+  font-family: monospace;
+  color: #111827;
+  background: white;
+  outline: none;
+  transition: border-color 0.2s;
+}
+.docid-input:focus { border-color: #f59e0b; }
+.btn-docid-save {
+  padding: 9px 16px;
+  background: var(--c-primary);
+  color: white;
+  border: none;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.btn-docid-save:disabled { opacity: 0.6; cursor: not-allowed; }
+.btn-docid-save:not(:disabled):hover { background: var(--c-primary-hover, #1d4ed8); }
+.btn-docid-clear {
+  padding: 9px 14px;
+  background: transparent;
+  color: #dc2626;
+  border: 1px solid #fca5a5;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.btn-docid-clear:not(:disabled):hover { background: #fee2e2; }
+.btn-docid-clear:disabled { opacity: 0.6; cursor: not-allowed; }
+.docid-hint {
+  font-size: 12px;
+  color: #78716c;
+}
+.docid-msg {
+  padding: 7px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.msg-ok  { background: #ecfdf5; color: #065f46; border: 1px solid #a7f3d0; }
+.msg-error { background: #fee2e2; color: #991b1b; border: 1px solid #fca5a5; }
 </style>

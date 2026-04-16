@@ -1141,7 +1141,13 @@ func (h *ActionHandler) CommentPost(req CommentPostRequest) CommentPostResponse 
 	time.Sleep(time.Duration(sleepMs) * time.Millisecond)
 
 	reqURL := "https://www.facebook.com/api/graphql/"
-	docID := "25720979764242405"
+	docID := "25720979764242405" // default
+	if h.configStore != nil {
+		if override := h.configStore.GetCommentDocID(); override != "" {
+			docID = override
+			fmt.Printf("[INFO] Comment dùng doc_id từ config: %s\n", docID)
+		}
+	}
 
 	actorID := ActorIDFromCookie(fbData.Info.Cookie)
 	if actorID == "" {
@@ -1475,6 +1481,53 @@ func (h *ActionHandler) UpdateCreatePostDocID(docID string) (string, error) {
 	}
 	return h.configStore.GetCreatePostDocID(), nil
 }
+
+// GetCommentDocID lay doc_id cho useCometUFICreateCommentMutation tu config.
+func (h *ActionHandler) GetCommentDocID() string {
+	if h.configStore != nil {
+		if v := h.configStore.GetCommentDocID(); v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// UpdateCommentDocID cap nhat comment doc_id.
+// Lay doc_id moi tu F12 > Network > useCometUFICreateCommentMutation > Request Payload > doc_id.
+// Truyen chuoi rong de reset ve default.
+func (h *ActionHandler) UpdateCommentDocID(docID string) (string, error) {
+	if h.configStore == nil {
+		return "", errors.New("config store chua duoc khoi tao")
+	}
+	if err := h.configStore.SetCommentDocID(docID); err != nil {
+		return "", err
+	}
+	return h.configStore.GetCommentDocID(), nil
+}
+
+// GetScrapeDocID lay doc_id cho scrape/crawl post tu config.
+func (h *ActionHandler) GetScrapeDocID() string {
+	if h.configStore != nil {
+		if v := h.configStore.GetScrapeDocID(); v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// UpdateScrapeDocID cap nhat scrape doc_id.
+// Lay doc_id moi tu F12 > Network > ProfileCometTimelineFeed > Request Payload > doc_id.
+// Truyen chuoi rong de reset ve default.
+func (h *ActionHandler) UpdateScrapeDocID(docID string) (string, error) {
+	if h.configStore == nil {
+		return "", errors.New("config store chua duoc khoi tao")
+	}
+	if err := h.configStore.SetScrapeDocID(docID); err != nil {
+		return "", err
+	}
+	return h.configStore.GetScrapeDocID(), nil
+}
+
 
 // toLog chuyển response thành ActionLog entry
 func toLog(resp LikePostResponse, msg string) ActionLog {
