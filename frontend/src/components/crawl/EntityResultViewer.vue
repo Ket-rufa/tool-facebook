@@ -24,11 +24,11 @@ const getMetricValue = (text: any, value: any) => {
 }
 
 const tabs = [
-  { id: 'overview', label: 'Overview' },
-  { id: 'fields', label: 'Fields' },
-  { id: 'raw', label: 'Raw JSON' },
-  { id: 'snapshots', label: 'Snapshots' },
-  { id: 'logs', label: 'Logs' }
+  { id: 'overview', label: 'Tổng quan' },
+  { id: 'fields', label: 'Dữ liệu' },
+  { id: 'raw', label: 'JSON Gốc' },
+  { id: 'snapshots', label: 'Lịch sử' },
+  { id: 'logs', label: 'Nhật ký' }
 ]
 </script>
 
@@ -63,11 +63,11 @@ const tabs = [
       <div class="entity-detail-pane" v-if="activeEntity">
         <div class="detail-header">
           <div class="header-info">
-            <h2>{{ activeEntity.identity?.display_name || 'Unknown Entity' }}</h2>
+            <h2>{{ activeEntity.identity?.display_name || 'Thực thể không xác định' }}</h2>
             <div class="badges">
               <span class="badge">{{ activeEntity.entity_type }}</span>
               <span class="badge" v-if="activeEntity.uid">UID: {{ activeEntity.uid }}</span>
-              <span :class="['badge status-type', activeEntity.scan_status]">{{ activeEntity.scan_status }}</span>
+              <span :class="['badge status-type', activeEntity.scan_status]">{{ activeEntity.scan_status === 'success' ? 'Thành công' : activeEntity.scan_status }}</span>
             </div>
           </div>
         </div>
@@ -88,17 +88,17 @@ const tabs = [
           <div v-if="activeTab === 'overview'" class="overview-grid">
             <div class="info-card">
               <h4>Thông tin cơ bản</h4>
-              <div class="info-row"><span class="label">Display name:</span> <span class="val">{{ activeEntity.identity?.display_name || '—' }}</span></div>
-              <div class="info-row"><span class="label">Alt name:</span> <span class="val">{{ activeEntity.identity?.alternate_name || '—' }}</span></div>
-              <div class="info-row"><span class="label">Bio:</span> <span class="val">{{ activeEntity.basic_info?.bio || '—' }}</span></div>
-              <div class="info-row"><span class="label">Birthday:</span> <span class="val">{{ activeEntity.basic_info?.birthday_text || '—' }}</span></div>
+              <div class="info-row"><span class="label">Tên hiển thị:</span> <span class="val">{{ activeEntity.identity?.display_name || '—' }}</span></div>
+              <div class="info-row"><span class="label">Tên khác:</span> <span class="val">{{ activeEntity.identity?.alternate_name || '—' }}</span></div>
+              <div class="info-row"><span class="label">Tiểu sử:</span> <span class="val">{{ activeEntity.basic_info?.bio || '—' }}</span></div>
+              <div class="info-row"><span class="label">Ngày sinh:</span> <span class="val">{{ activeEntity.basic_info?.birthday_text || '—' }}</span></div>
             </div>
             
             <div class="info-card">
               <h4>Vị trí & Học vấn</h4>
-              <div class="info-row"><span class="label">Current city:</span> <span class="val">{{ activeEntity.location?.current_city || '—' }}</span></div>
-              <div class="info-row"><span class="label">Hometown:</span> <span class="val">{{ activeEntity.location?.hometown || '—' }}</span></div>
-              <div class="info-row"><span class="label">Education:</span> 
+              <div class="info-row"><span class="label">Thành phố hiện tại:</span> <span class="val">{{ activeEntity.location?.current_city || '—' }}</span></div>
+              <div class="info-row"><span class="label">Quê quán:</span> <span class="val">{{ activeEntity.location?.hometown || '—' }}</span></div>
+              <div class="info-row"><span class="label">Học vấn:</span> 
                 <span class="val">
                   <ul class="val-list" v-if="activeEntity.education?.length">
                     <li v-for="edu in activeEntity.education" :key="edu">{{ edu }}</li>
@@ -109,10 +109,10 @@ const tabs = [
             </div>
 
             <div class="info-card">
-              <h4>Metrics (Chỉ công khai)</h4>
-              <div class="info-row"><span class="label">Followers:</span> <span class="val">{{ getMetricValue(activeEntity.metrics?.followers_text, activeEntity.metrics?.followers_value) }}</span></div>
-              <div class="info-row"><span class="label">Following:</span> <span class="val">{{ getMetricValue(activeEntity.metrics?.following_text, activeEntity.metrics?.following_value) }}</span></div>
-              <div class="info-row"><span class="label">Friends:</span> <span class="val">{{ getMetricValue(activeEntity.metrics?.friends_count_text, activeEntity.metrics?.friends_count_value) }}</span></div>
+              <h4>Chỉ số (Công khai)</h4>
+              <div class="info-row"><span class="label">Người theo dõi:</span> <span class="val">{{ getMetricValue(activeEntity.metrics?.followers_text, activeEntity.metrics?.followers_value) }}</span></div>
+              <div class="info-row"><span class="label">Đang theo dõi:</span> <span class="val">{{ getMetricValue(activeEntity.metrics?.following_text, activeEntity.metrics?.following_value) }}</span></div>
+              <div class="info-row"><span class="label">Bạn bè:</span> <span class="val">{{ getMetricValue(activeEntity.metrics?.friends_count_text, activeEntity.metrics?.friends_count_value) }}</span></div>
             </div>
 
             <div class="info-card">
@@ -128,9 +128,9 @@ const tabs = [
              <table class="fields-table">
                <thead>
                  <tr>
-                   <th>Field</th>
-                   <th>Group</th>
-                   <th>Value</th>
+                   <th>Trường</th>
+                   <th>Nhóm</th>
+                   <th>Giá trị</th>
                    <th>Trạng thái</th>
                  </tr>
                </thead>

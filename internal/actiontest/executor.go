@@ -260,7 +260,7 @@ func executeReactionRequest(cookie, fbDtsg, actorID, variablesJSON string, strat
 	body := string(bodyBytes)
 	bodyNoGuard := strings.TrimPrefix(strings.TrimSpace(body), "for (;;);")
 
-	log.Printf("[Executor] strategy=%s status=%d body=%s", strategy.name, resp.StatusCode, truncateStr(bodyNoGuard, 220))
+	log.Printf("[Executor] strategy=%s status=%d body=%s", strategy.name, resp.StatusCode, TruncateStr(bodyNoGuard, 220))
 
 	if strings.Contains(bodyNoGuard, `"error":1357032`) || strings.Contains(bodyNoGuard, `"error":1357001`) {
 		return bodyNoGuard, ErrStaleContext, errors.New("fb_dtsg hoac session da het han (error 1357032 / 1357001)")
@@ -283,7 +283,7 @@ func executeReactionRequest(cookie, fbDtsg, actorID, variablesJSON string, strat
 	}
 
 	if strings.Contains(bodyNoGuard, `"errors":`) {
-		return bodyNoGuard, ErrGraphqlFB, fmt.Errorf("graphql errors (%s): %s", strategy.name, truncateStr(bodyNoGuard, 260))
+		return bodyNoGuard, ErrGraphqlFB, fmt.Errorf("graphql errors (%s): %s", strategy.name, TruncateStr(bodyNoGuard, 260))
 	}
 	if strings.Contains(bodyNoGuard, `"data":`) {
 		return bodyNoGuard, "", nil
@@ -292,7 +292,7 @@ func executeReactionRequest(cookie, fbDtsg, actorID, variablesJSON string, strat
 		return bodyNoGuard, ErrMalformed, fmt.Errorf("facebook tra ve status %d", resp.StatusCode)
 	}
 
-	return bodyNoGuard, ErrGraphqlFB, fmt.Errorf("phan hoi khong co data (%s): %s", strategy.name, truncateStr(bodyNoGuard, 220))
+	return bodyNoGuard, ErrGraphqlFB, fmt.Errorf("phan hoi khong co data (%s): %s", strategy.name, TruncateStr(bodyNoGuard, 220))
 }
 
 func isIncorrectQuery(body string) bool {
@@ -301,7 +301,7 @@ func isIncorrectQuery(body string) bool {
 		strings.Contains(body, "The query provided was invalid")
 }
 
-func truncateStr(s string, n int) string {
+func TruncateStr(s string, n int) string {
 	if len(s) <= n {
 		return s
 	}

@@ -1,9 +1,14 @@
 <script setup lang="ts">
-defineProps<{
+const props = defineProps<{
   config: any
 }>()
 
-const availableGroups = ['Identity', 'Basic info', 'Location', 'Education', 'Work', 'Metrics', 'External links', 'Public posts']
+const availableGroups = ['Danh tính', 'Thông tin cơ bản', 'Địa điểm', 'Giáo dục', 'Công việc', 'Chỉ số', 'Liên kết ngoài', 'Bài viết công khai']
+const emit = defineEmits(['run'])
+
+const handleRun = () => {
+  emit('run')
+}
 </script>
 
 <template>
@@ -16,9 +21,9 @@ const availableGroups = ['Identity', 'Basic info', 'Location', 'Education', 'Wor
       <div class="config-section">
         <label>Preset cấu hình</label>
         <select class="form-select" :value="config.preset">
-          <option value="Basic">Basic (Thông tin cơ bản)</option>
-          <option value="Standard">Standard (Tiêu chuẩn)</option>
-          <option value="Deep">Deep Public Scan (Chuyên sâu)</option>
+          <option value="Basic">Cơ bản (Thông tin chính)</option>
+          <option value="Standard">Tiêu chuẩn (Đầy đủ)</option>
+          <option value="Deep">Chuyên sâu (Quét rộng)</option>
         </select>
       </div>
 
@@ -34,25 +39,25 @@ const availableGroups = ['Identity', 'Basic info', 'Location', 'Education', 'Wor
 
       <div class="config-section runner-config">
         <div class="config-item">
-          <label>Concurrency</label>
+          <label>Số luồng</label>
           <input type="number" class="form-input" :value="config.concurrency" />
         </div>
         <div class="config-item">
-          <label>Delay (ms)</label>
+          <label>Độ trễ (ms)</label>
           <input type="number" class="form-input" :value="config.delay" />
         </div>
         <div class="config-item">
-          <label>Retry limit</label>
+          <label>Giới hạn thử lại</label>
           <input type="number" class="form-input" :value="config.retry" />
         </div>
         <div class="config-item">
-          <label>Max Posts</label>
+          <label>Tối đa bài viết</label>
           <input type="number" class="form-input" :value="config.maxPosts" />
         </div>
       </div>
 
       <div class="actions-footer">
-        <button class="btn btn-run">Bắt đầu quét</button>
+        <button class="btn btn-run" @click="handleRun">Bắt đầu quét</button>
         <button class="btn btn-pause">Tạm dừng</button>
         <button class="btn btn-stop">Dừng</button>
       </div>

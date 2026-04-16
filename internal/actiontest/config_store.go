@@ -11,7 +11,10 @@ import (
 )
 
 type actionConfig struct {
-	ReactDocID string `json:"react_doc_id"`
+	ReactDocID      string `json:"react_doc_id"`
+	CreatePostDocID string `json:"create_post_doc_id"`
+	CommentDocID    string `json:"comment_doc_id"`
+	ScrapeDocID     string `json:"scrape_doc_id"`
 }
 
 type ConfigStore struct {
@@ -54,6 +57,8 @@ func (s *ConfigStore) persistLocked() error {
 	return os.WriteFile(s.filePath, b, 0644)
 }
 
+// ── ReactDocID ───────────────────────────────────────────────────────────────
+
 func (s *ConfigStore) GetReactDocID() string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -65,12 +70,70 @@ func (s *ConfigStore) SetReactDocID(docID string) error {
 	if docID != "" && !isNumericString(docID) {
 		return errors.New("doc_id chi duoc chua so")
 	}
-
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.cache.ReactDocID = docID
 	return s.persistLocked()
 }
+
+// ── CreatePostDocID ──────────────────────────────────────────────────────────
+
+func (s *ConfigStore) GetCreatePostDocID() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return strings.TrimSpace(s.cache.CreatePostDocID)
+}
+
+func (s *ConfigStore) SetCreatePostDocID(docID string) error {
+	docID = strings.TrimSpace(docID)
+	if docID != "" && !isNumericString(docID) {
+		return errors.New("create_post doc_id chi duoc chua so")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.cache.CreatePostDocID = docID
+	return s.persistLocked()
+}
+
+// ── CommentDocID ─────────────────────────────────────────────────────────────
+
+func (s *ConfigStore) GetCommentDocID() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return strings.TrimSpace(s.cache.CommentDocID)
+}
+
+func (s *ConfigStore) SetCommentDocID(docID string) error {
+	docID = strings.TrimSpace(docID)
+	if docID != "" && !isNumericString(docID) {
+		return errors.New("comment doc_id chi duoc chua so")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.cache.CommentDocID = docID
+	return s.persistLocked()
+}
+
+// ── ScrapeDocID ───────────────────────────────────────────────────────────────
+
+func (s *ConfigStore) GetScrapeDocID() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return strings.TrimSpace(s.cache.ScrapeDocID)
+}
+
+func (s *ConfigStore) SetScrapeDocID(docID string) error {
+	docID = strings.TrimSpace(docID)
+	if docID != "" && !isNumericString(docID) {
+		return errors.New("scrape doc_id chi duoc chua so")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.cache.ScrapeDocID = docID
+	return s.persistLocked()
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
 
 func isNumericString(v string) bool {
 	if v == "" {

@@ -17,23 +17,23 @@ defineProps<{
           <div class="stat-value">{{ status.total }}</div>
         </div>
         <div class="stat-card">
-          <div class="stat-label">Queued</div>
+          <div class="stat-label">Đang chờ</div>
           <div class="stat-value">{{ status.queued }}</div>
         </div>
         <div class="stat-card running">
-          <div class="stat-label">Running</div>
+          <div class="stat-label">Đang chạy</div>
           <div class="stat-value">{{ status.running }}</div>
         </div>
         <div class="stat-card success">
-          <div class="stat-label">Success</div>
+          <div class="stat-label">Thành công</div>
           <div class="stat-value">{{ status.success }}</div>
         </div>
         <div class="stat-card failed">
-          <div class="stat-label">Failed</div>
+          <div class="stat-label">Thất bại</div>
           <div class="stat-value">{{ status.failed }}</div>
         </div>
         <div class="stat-card partial">
-          <div class="stat-label">Partial</div>
+          <div class="stat-label">Một phần</div>
           <div class="stat-value">{{ status.partial }}</div>
         </div>
       </div>

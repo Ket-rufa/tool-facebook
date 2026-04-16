@@ -1,6 +1,6 @@
-import { LikePost, GetActionLogs } from '../../wailsjs/go/actiontest/ActionHandler'
+import { LikePost, CommentPost, CreatePost, GetActionLogs } from '../../wailsjs/go/actiontest/ActionHandler'
 import { actiontest } from '../../wailsjs/go/models'
-import type { ActionResponse, ActionLog, ActionRequest } from '../types/action'
+import type { ActionResponse, ActionLog, ActionRequest, CommentRequest, CreatePostRequest } from '../types/action'
 
 export const actionsService = {
   async likePost(reqData: ActionRequest): Promise<ActionResponse> {
@@ -52,6 +52,82 @@ export const actionsService = {
     }
   },
 
+  async commentPost(reqData: CommentRequest): Promise<ActionResponse> {
+    const req = new actiontest.CommentPostRequest({
+      post_id: reqData.post_id,
+      account_id: reqData.account_id,
+      comment_text: reqData.comment_text,
+      dry_run: reqData.dry_run,
+      actor_source: reqData.actor_source || 'manual_test'
+    })
+
+    try {
+      const resp = await CommentPost(req)
+      return {
+        success: resp.success,
+        status: resp.status,
+        action: resp.action,
+        post_id: resp.post_id,
+        account_id: resp.account_id,
+        account_display_name: resp.account_display_name,
+        comment_text: resp.comment_text,
+        dry_run: resp.dry_run,
+        message: resp.message,
+        executed_at: resp.executed_at as unknown as string
+      }
+    } catch (e: any) {
+      return {
+        success: false,
+        status: 'system_error',
+        action: 'comment',
+        post_id: reqData.post_id,
+        account_id: reqData.account_id,
+        comment_text: reqData.comment_text,
+        dry_run: reqData.dry_run,
+        message: 'Lỗi kết nối backend: ' + (e?.message || e?.toString() || 'Unknown error'),
+        executed_at: new Date().toISOString()
+      }
+    }
+  },
+
+  async createPost(reqData: CreatePostRequest): Promise<ActionResponse> {
+    const req = new actiontest.CreatePostRequest({
+      account_id: reqData.account_id,
+      post_text: reqData.post_text,
+      image_paths: reqData.image_paths,
+      dry_run: reqData.dry_run,
+      actor_source: reqData.actor_source || 'manual_test'
+    })
+
+    try {
+      const resp = await CreatePost(req)
+      return {
+        success: resp.success,
+        status: resp.status,
+        action: resp.action,
+        post_id: '',
+        account_id: resp.account_id,
+        account_display_name: resp.account_display_name,
+        post_text: resp.post_text,
+        dry_run: resp.dry_run,
+        message: resp.message,
+        executed_at: resp.executed_at as unknown as string
+      }
+    } catch (e: any) {
+      return {
+        success: false,
+        status: 'system_error',
+        action: 'create_post',
+        post_id: '',
+        account_id: reqData.account_id,
+        post_text: reqData.post_text,
+        dry_run: reqData.dry_run,
+        message: 'Lỗi kết nối backend: ' + (e?.message || e?.toString() || 'Unknown error'),
+        executed_at: new Date().toISOString()
+      }
+    }
+  },
+
   async getActionLogs(): Promise<ActionLog[]> {
     try {
       const logs = await GetActionLogs()
@@ -61,6 +137,8 @@ export const actionsService = {
         account_id: l.account_id,
         account_display_name: l.account_display_name,
         post_id: l.post_id,
+        comment_text: l.comment_text,
+        post_text: l.post_text,
         reaction_type: l.reaction_type,
         reaction_id: l.reaction_id,
         status: l.status,

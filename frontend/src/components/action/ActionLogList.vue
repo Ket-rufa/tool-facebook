@@ -44,7 +44,7 @@ const getStatusClass = (status: string) => {
               <th>Thời gian</th>
               <th>Tài khoản</th>
               <th>Mã Bài Viết</th>
-              <th>Cảm xúc</th>
+              <th>Hành Động</th>
               <th>Trạng Thái</th>
               <th>Message</th>
             </tr>
@@ -60,7 +60,7 @@ const getStatusClass = (status: string) => {
                 <span class="id-text">{{ log.post_id || '-' }}</span>
               </td>
               <td class="cell-reaction capitalize">
-                {{ log.reaction_type || 'like' }}
+                {{ log.action_type === 'comment' ? 'Comment' : (log.reaction_type || log.action_type) }}
               </td>
               <td>
                 <div class="status-wrapper">

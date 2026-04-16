@@ -1,7 +1,18 @@
 <script setup lang="ts">
+import { ref } from 'vue'
+
 defineProps<{
   targets: any[]
 }>()
+
+const emit = defineEmits(['add', 'resolve', 'clear'])
+const rawInput = ref('')
+
+const handleAdd = () => {
+  if (!rawInput.value.trim()) return
+  emit('add', rawInput.value)
+  rawInput.value = ''
+}
 </script>
 
 <template>
@@ -12,12 +23,16 @@ defineProps<{
     </div>
     
     <div class="panel-body">
-      <textarea class="target-textarea" placeholder="Dán danh sách Facebook profile/page URL vào đây (mỗi dòng 1 dạng)..."></textarea>
+      <textarea 
+        class="target-textarea" 
+        v-model="rawInput"
+        placeholder="Dán danh sách Facebook profile/page URL vào đây (mỗi dòng 1 dạng)..."
+      ></textarea>
       
       <div class="action-row">
-        <button class="btn btn-primary">Thêm mục tiêu</button>
-        <button class="btn btn-outline">Resolve UID</button>
-        <button class="btn btn-text text-danger">Xoá tất cả</button>
+        <button class="btn btn-primary" @click="handleAdd">Thêm mục tiêu</button>
+        <button class="btn btn-outline" @click="emit('resolve')">Giải mã UID</button>
+        <button class="btn btn-text text-danger" @click="emit('clear')">Xoá tất cả</button>
       </div>
 
       <div class="target-list">
@@ -35,8 +50,12 @@ defineProps<{
           </div>
           <div class="target-status">
             <span class="uid-badge" v-if="target.uid">UID: {{ target.uid }}</span>
-            <span :class="['status-badge', target.resolveStatus.toLowerCase()]">{{ target.resolveStatus }}</span>
-            <span :class="['access-badge', target.publicAccess.toLowerCase()]">{{ target.publicAccess }}</span>
+            <span :class="['status-badge', target.resolveStatus.toLowerCase()]">
+              {{ target.resolveStatus === 'Resolved' ? 'Đã giải mã' : target.resolveStatus === 'Failed' ? 'Thất bại' : 'Chờ xử lý' }}
+            </span>
+            <span :class="['access-badge', target.publicAccess.toLowerCase()]">
+              {{ target.publicAccess === 'Accessible' ? 'Truy cập được' : target.publicAccess === 'Inaccessible' ? 'Bị chặn' : 'Không xác định' }}
+            </span>
           </div>
         </div>
       </div>
@@ -177,7 +196,9 @@ defineProps<{
 .status-badge, .access-badge { font-size: 10px; font-weight: 500; }
 .status-badge.resolved { color: #059669; }
 .status-badge.failed { color: #dc2626; }
+.status-badge.pending { color: #6b7280; }
 .access-badge.accessible { color: #059669; }
 .access-badge.partial { color: #d97706; }
 .access-badge.inaccessible { color: #dc2626; }
+.access-badge.unknown { color: #6b7280; }
 </style>
