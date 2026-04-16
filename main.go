@@ -11,6 +11,7 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
 	"github.com/yourname/tool-facebook/internal/accounts"
 	"github.com/yourname/tool-facebook/internal/actiontest"
+	"github.com/yourname/tool-facebook/internal/crawl"
 	"github.com/yourname/tool-facebook/internal/fbdata"
 )
 
@@ -47,6 +48,8 @@ func main() {
 	}
 	actionHandler := actiontest.NewActionHandlerWithStoreAndConfig(sessionHandler, store, fbStore, configStore)
 
+	crawlHandler := crawl.NewCrawlHandler(store, fbStore)
+
 	err = wails.Run(&options.App{
 		Title:  "Tool Facebook",
 		Width:  1280,
@@ -61,6 +64,7 @@ func main() {
 			sessionHandler,
 			actionHandler,
 			accountService,
+			crawlHandler,
 		},
 	})
 

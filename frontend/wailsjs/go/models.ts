@@ -366,3 +366,86 @@ export namespace actiontest {
 
 }
 
+export namespace crawl {
+	
+	export class CrawlPostEntity {
+	    post_id: string;
+	    author: string;
+	    content: string;
+	    time: string;
+	    reactions: string;
+	    comments: string;
+	    media_urls: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new CrawlPostEntity(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.post_id = source["post_id"];
+	        this.author = source["author"];
+	        this.content = source["content"];
+	        this.time = source["time"];
+	        this.reactions = source["reactions"];
+	        this.comments = source["comments"];
+	        this.media_urls = source["media_urls"];
+	    }
+	}
+	export class CrawlRequest {
+	    target_id: string;
+	    type: string;
+	    limit: number;
+	    account_id: string;
+	    cursor: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new CrawlRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.target_id = source["target_id"];
+	        this.type = source["type"];
+	        this.limit = source["limit"];
+	        this.account_id = source["account_id"];
+	        this.cursor = source["cursor"];
+	    }
+	}
+	export class CrawlResponse {
+	    success: boolean;
+	    message: string;
+	    data: CrawlPostEntity[];
+	
+	    static createFrom(source: any = {}) {
+	        return new CrawlResponse(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.success = source["success"];
+	        this.message = source["message"];
+	        this.data = this.convertValues(source["data"], CrawlPostEntity);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+
+}
+

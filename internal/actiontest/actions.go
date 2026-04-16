@@ -22,8 +22,8 @@ import (
 	"github.com/yourname/tool-facebook/internal/fbdata"
 )
 
-// jsonStr trả về chuỗi được JSON encode an toàn (có xử lý ký tự đặc biệt)
-func jsonStr(s string) string {
+// JsonStr trả về chuỗi được JSON encode an toàn (có xử lý ký tự đặc biệt)
+func JsonStr(s string) string {
 	b, _ := json.Marshal(s)
 	return string(b)
 }
@@ -39,8 +39,8 @@ func generateToken() string {
 	)
 }
 
-// actorIDFromCookie trích xuất UID từ cookie string
-func actorIDFromCookie(cookie string) string {
+// ActorIDFromCookie trích xuất UID từ cookie string
+func ActorIDFromCookie(cookie string) string {
 	for _, part := range strings.Split(cookie, ";") {
 		part = strings.TrimSpace(part)
 		if strings.HasPrefix(part, "c_user=") {
@@ -393,7 +393,7 @@ func uploadOneLocalMedia(cookie, actorID, fbDtsg, lsd string, sd SessionData, lo
 		}
 		
 		// BUG FIX: Essential CSRF bypass
-		_ = writer.WriteField("jazoest", generateJazoest(fbDtsg))
+		_ = writer.WriteField("jazoest", CalcJazoest(fbDtsg))
 		_ = writer.WriteField("lsd", lsd)
 
 		_ = writer.WriteField("fb_dtsg", fbDtsg)
@@ -424,7 +424,7 @@ func uploadOneLocalMedia(cookie, actorID, fbDtsg, lsd string, sd SessionData, lo
 			_ = writer.WriteField("__spin_t", strings.TrimSpace(sd.SpinT))
 		}
 		_ = writer.WriteField("fb_dtsg", fbDtsg)
-		_ = writer.WriteField("jazoest", calcJazoest(fbDtsg))
+		_ = writer.WriteField("jazoest", CalcJazoest(fbDtsg))
 		if strings.TrimSpace(lsd) != "" {
 			_ = writer.WriteField("lsd", strings.TrimSpace(lsd))
 		}
@@ -573,13 +573,18 @@ type SessionData struct {
 	SpinT string
 }
 
-// fetchSessionData truy cập trang chủ Facebook ngầm để lấy lsd, fb_dtsg và các thông số kỹ thuật khác
-func fetchSessionData(cookie string) (data SessionData, err error) {
+// FetchSessionData truy cập trang chủ Facebook ngầm để lấy lsd, fb_dtsg và các thông số kỹ thuật khác
+func FetchSessionData(cookie string) (data SessionData, err error) {
 	client := &http.Client{Timeout: 10 * time.Second}
 	req, _ := http.NewRequest("GET", "https://www.facebook.com/", nil)
 
+	// Làm sạch cookie triệt để để tránh lỗi 400 Bad Request
+	cleanCookie := strings.ReplaceAll(cookie, "\n", "")
+	cleanCookie = strings.ReplaceAll(cleanCookie, "\r", "")
+	cleanCookie = strings.TrimSpace(cleanCookie)
+
 	// Headers siêu tàng hình
-	req.Header.Set("Cookie", cookie)
+	req.Header.Set("Cookie", cleanCookie)
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
 	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7")
 	req.Header.Set("Accept-Language", "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7")
@@ -659,7 +664,7 @@ func fetchSessionData(cookie string) (data SessionData, err error) {
 	}
 
 	// Kiểm tra xem có thực sự đang ở trạng thái đăng nhập không
-	isLoggedIn := strings.Contains(bodyStr, `"USER_ID":"`) || strings.Contains(bodyStr, "c_user=") || strings.Contains(bodyStr, actorIDFromCookie(cookie))
+	isLoggedIn := strings.Contains(bodyStr, `"USER_ID":"`) || strings.Contains(bodyStr, "c_user=") || strings.Contains(bodyStr, ActorIDFromCookie(cookie))
 
 	if !isLoggedIn {
 		fmt.Printf("[WARN] Facebook yêu cầu đăng nhập (hoặc Cookie đã hết hạn) khi lấy LSD.\n")
@@ -710,7 +715,7 @@ func fetchSessionData(cookie string) (data SessionData, err error) {
 			if token == "" {
 				continue
 			}
-			// Giữ nguyên token full (kể cả suffix :n:timestamp nếu có).
+			// Giữ nguyên token full (kể cả :n:timestamp nếu có).
 			data.DTSG = token
 			fmt.Printf("[INFO] Đã lấy được fb_dtsg mới (pattern: %s): %s\n", pattern[:min(20, len(pattern))], data.DTSG[:min(20, len(data.DTSG))])
 			break
@@ -741,14 +746,14 @@ func min(a, b int) int {
 	return b
 }
 
-// calcJazoest tính jazoest checksum từ fb_dtsg
+// CalcJazoest tính jazoest checksum từ fb_dtsg
 // Công thức: "2" + tổng ASCII code của tất cả ký tự trong dtsg
-func calcJazoest(dtsg string) string {
+func CalcJazoest(fbDtsg string) string {
 	sum := 0
-	for _, c := range dtsg {
+	for _, c := range fbDtsg {
 		sum += int(c)
 	}
-	return fmt.Sprintf("2%d", sum)
+	return "2" + fmt.Sprintf("%d", sum)
 }
 
 type ActionHandler struct {
@@ -916,7 +921,7 @@ func (h *ActionHandler) LikePost(req LikePostRequest) LikePostResponse {
 	}
 	// actor_id that phai la c_user trong cookie.
 	if cookie != "" {
-		if uid := strings.TrimSpace(actorIDFromCookie(cookie)); uid != "" {
+		if uid := strings.TrimSpace(ActorIDFromCookie(cookie)); uid != "" {
 			actorID = uid
 		}
 	}
@@ -1138,7 +1143,7 @@ func (h *ActionHandler) CommentPost(req CommentPostRequest) CommentPostResponse 
 	reqURL := "https://www.facebook.com/api/graphql/"
 	docID := "25720979764242405"
 
-	actorID := actorIDFromCookie(fbData.Info.Cookie)
+	actorID := ActorIDFromCookie(fbData.Info.Cookie)
 	if actorID == "" {
 		actorID = strings.TrimSpace(fbData.UID) // fallback
 	}
@@ -1154,7 +1159,7 @@ func (h *ActionHandler) CommentPost(req CommentPostRequest) CommentPostResponse 
 		return resp
 	}
 
-	sessionData, sdErr := fetchSessionData(fbData.Info.Cookie)
+	sessionData, sdErr := FetchSessionData(fbData.Info.Cookie)
 	lsd := ""
 	if sdErr == nil && strings.TrimSpace(sessionData.LSD) != "" {
 		lsd = strings.TrimSpace(sessionData.LSD)
@@ -1243,7 +1248,7 @@ func (h *ActionHandler) CommentPost(req CommentPostRequest) CommentPostResponse 
 			fd.Set("__hsi", strings.TrimSpace(sessionData.HSI))
 		}
 		fd.Set("fb_dtsg", fbDtsg)
-		fd.Set("jazoest", calcJazoest(fbDtsg))
+		fd.Set("jazoest", CalcJazoest(fbDtsg))
 		fd.Set("variables", variables)
 		if lsdToken != "" {
 			fd.Set("lsd", lsdToken)
@@ -1266,7 +1271,7 @@ func (h *ActionHandler) CommentPost(req CommentPostRequest) CommentPostResponse 
 		}
 		httpReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		httpReq.Header.Set("Cookie", fbData.Info.Cookie)
-		httpReq.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+		httpReq.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/124.0.0.0")
 		httpReq.Header.Set("Origin", "https://www.facebook.com")
 		httpReq.Header.Set("Referer", "https://www.facebook.com/")
 		httpReq.Header.Set("Accept", "*/*")
@@ -1344,7 +1349,7 @@ func (h *ActionHandler) CommentPost(req CommentPostRequest) CommentPostResponse 
 		time.Sleep(time.Duration(backoffMs) * time.Millisecond)
 
 		// Làm mới token trước khi retry.
-		if refreshed, rErr := fetchSessionData(fbData.Info.Cookie); rErr == nil {
+		if refreshed, rErr := FetchSessionData(fbData.Info.Cookie); rErr == nil {
 			if strings.TrimSpace(refreshed.LSD) != "" {
 				lsd = strings.TrimSpace(refreshed.LSD)
 			}
@@ -1721,7 +1726,7 @@ func (h *ActionHandler) CreatePost(req CreatePostRequest) CreatePostResponse {
 		// Omit → field_exception 1357010.
 		messageField := `"message":{"ranges":[],"text":""},`
 		if strings.TrimSpace(messageTextForMutation) != "" {
-			messageField = fmt.Sprintf(`"message":{"ranges":[],"text":%s},`, jsonStr(messageTextForMutation))
+			messageField = fmt.Sprintf(`"message":{"ranges":[],"text":%s},`, JsonStr(messageTextForMutation))
 		}
 
 		return fmt.Sprintf(`{`+
@@ -1795,12 +1800,12 @@ func (h *ActionHandler) CreatePost(req CreatePostRequest) CreatePostResponse {
 			`"__relay_internal__pv__GHLShouldUseSponsoredAuctionLabelFieldNameV1relayprovider":false,`+
 			`"__relay_internal__pv__GHLShouldUseSponsoredAuctionLabelFieldNameV2relayprovider":false`+
 			`}`,
-			jsonStr(idempotenceToken), attachmentsJSON, messageField, jsonStr(composerSessionID), jsonStr(actorID))
+			JsonStr(idempotenceToken), attachmentsJSON, messageField, JsonStr(composerSessionID), JsonStr(ActorIDFromCookie(actorID)))
 	}
 
 	// Lấy LSD token (cần thiết cho Comet GraphQL endpoint)
 	lsd := ""
-	sessionData, sdErr := fetchSessionData(fbInfo.Info.Cookie)
+	sessionData, sdErr := FetchSessionData(fbInfo.Info.Cookie)
 	if sdErr == nil && sessionData.LSD != "" {
 		lsd = sessionData.LSD
 		fmt.Printf("[INFO] LSD token: %s\n", lsd)
@@ -1913,7 +1918,7 @@ func (h *ActionHandler) CreatePost(req CreatePostRequest) CreatePostResponse {
 			fd.Set("__hsi", strings.TrimSpace(sessionData.HSI))
 		}
 		fd.Set("fb_dtsg", fbDtsg) // Gửi FULL token (kể cả :3:timestamp)
-		fd.Set("jazoest", calcJazoest(fbDtsg))
+		fd.Set("jazoest", CalcJazoest(fbDtsg))
 		if strings.TrimSpace(sessionData.SpinR) != "" {
 			fd.Set("__spin_r", strings.TrimSpace(sessionData.SpinR))
 		}
@@ -2221,4 +2226,11 @@ func (h *ActionHandler) CreatePost(req CreatePostRequest) CreatePostResponse {
 	}
 	AddLog(logFromPost(resp, resp.Message))
 	return resp
+}
+
+// SanitizeCookie loại bỏ các ký tự xuống dòng và khoảng trắng thừa trong cookie
+func SanitizeCookie(cookie string) string {
+	cookie = strings.ReplaceAll(cookie, "\n", "")
+	cookie = strings.ReplaceAll(cookie, "\r", "")
+	return strings.TrimSpace(cookie)
 }

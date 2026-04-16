@@ -3,6 +3,7 @@ import { ref, provide } from 'vue'
 import AppShell from './components/AppShell.vue'
 import Overview from './pages/Overview.vue'
 import Jobs from './pages/Jobs.vue'
+import PostScraper from './pages/PostScraper.vue'
 import Settings from './pages/Settings.vue'
 import ActionLikeTest from './pages/ActionLikeTest.vue'
 import ActionCommentTest from './pages/ActionCommentTest.vue'
@@ -23,6 +24,7 @@ provide('navigate', (route: string) => {
   <AppShell>
     <Overview v-if="currentRoute === 'overview'" />
     <Jobs v-if="currentRoute === 'tasks'" />
+    <PostScraper v-if="currentRoute === 'post-scraper'" />
     <Settings v-if="currentRoute === 'settings'" />
     <ActionLikeTest v-if="currentRoute === 'action-like-test'" />
     <ActionCommentTest v-if="currentRoute === 'action-comment-test'" />
