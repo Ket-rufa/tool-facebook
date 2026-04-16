@@ -152,8 +152,14 @@ func (h *CrawlHandler) fetchPostsViaGraphQL(crawlReq CrawlRequest, cookie string
 	_ = os.WriteFile("data/last_graphql_debug.json", body, 0644)
 
 	bodyStr := string(body)
+	return h.parseGraphQLBody(bodyStr)
+}
+
+// parseGraphQLBody là hàm dùng chung để parse response GraphQL của Facebook
+// cho cả profile lẫn page — cấu trúc JSON hoàn toàn giống nhau
+func (h *CrawlHandler) parseGraphQLBody(bodyStr string) ([]CrawlPostEntity, string, error) {
 	lines := strings.Split(bodyStr, "\n")
-	
+
 	getMap := func(m interface{}) map[string]interface{} {
 		if val, ok := m.(map[string]interface{}); ok { return val }
 		return nil
@@ -171,12 +177,10 @@ func (h *CrawlHandler) fetchPostsViaGraphQL(crawlReq CrawlRequest, cookie string
 		
 		var chunk interface{}
 		if err := json.Unmarshal([]byte(line), &chunk); err != nil {
-			// Skip invalid chunks, but log for debug
 			continue
 		}
 
 		if m := getMap(chunk); m != nil {
-			// Some chunks have "data" directly, some have "payload" -> "data"
 			if d := getMap(m["data"]); d != nil {
 				dataNodes = append(dataNodes, d)
 			} else if p := getMap(m["payload"]); p != nil {
@@ -195,7 +199,7 @@ func (h *CrawlHandler) fetchPostsViaGraphQL(crawlReq CrawlRequest, cookie string
 		}
 	}
 
-	fmt.Printf("[DEBUG] Processed %d chunks, Found %d valid data nodes\n", len(lines), len(dataNodes))
+	fmt.Printf("[DEBUG] Parsed %d chunks, found %d valid data nodes\n", len(lines), len(dataNodes))
 
 	var results []CrawlPostEntity
 	processedIDs := make(map[string]bool)
@@ -340,7 +344,7 @@ func (h *CrawlHandler) fetchPostsViaGraphQL(crawlReq CrawlRequest, cookie string
 	nextCursor := ""
 	for _, data := range dataNodes {
 		edges := findEdges(data)
-		fmt.Printf("[DEBUG] Searching edges recursively, found %d edges\n", len(edges))
+		fmt.Printf("[DEBUG] Found %d edges\n", len(edges))
 		
 		if timelineCursor != "" {
 			nextCursor = timelineCursor
@@ -369,7 +373,7 @@ func (h *CrawlHandler) fetchPostsViaGraphQL(crawlReq CrawlRequest, cookie string
 
 			if text != "" || postID != "" {
 				processedIDs[postID] = true
-				if ct > 0 { // Don't add posts with 1970 
+				if ct > 0 {
 					fmt.Printf("[DEBUG] >> Found Post: %s (len:%d, R:%s, C:%s)\n", postID, len(text), reactions, comments)
 					p := CrawlPostEntity{
 						PostID:    postID,
@@ -389,6 +393,81 @@ func (h *CrawlHandler) fetchPostsViaGraphQL(crawlReq CrawlRequest, cookie string
 	}
 	fmt.Printf("[DEBUG] Extracted Next Cursor: %s\n", nextCursor)
 	return results, nextCursor, nil
+}
+
+// fetchPostsViaGraphQLPage fetches posts from a Fanpage using CometProfilePostsTabFeedPaginationQuery
+func (h *CrawlHandler) fetchPostsViaGraphQLPage(crawlReq CrawlRequest, cookie string) ([]CrawlPostEntity, string, error) {
+	targetID := crawlReq.TargetID
+	fmt.Printf("[CRAWL] Fetching PAGE posts for Page ID: %s (Cursor: %s)\n", targetID, crawlReq.Cursor)
+
+	sd, err := actiontest.FetchSessionData(cookie)
+	if err != nil {
+		return nil, "", err
+	}
+
+	docID := "8731949750167478"
+
+	vars := map[string]interface{}{
+		"count":           3,
+		"cursor":          nil,
+		"feedLocation":    "PAGE_TIMELINE",
+		"feedbackSource":  0,
+		"focusCommentID":  nil,
+		"renderLocation":  "timeline",
+		"scale":           1,
+		"useDefaultActor": false,
+		"id":              targetID,
+		"__relay_internal__pv__GHLShouldChangeAdIdFieldNamerelayprovider":          true,
+		"__relay_internal__pv__GHLShouldChangeSponsoredDataFieldNamerelayprovider": true,
+		"__relay_internal__pv__CometUFIReactionsEnableShortNamerelayprovider":      false,
+		"__relay_internal__pv__CometUFIShareActionMigrationrelayprovider":          true,
+		"__relay_internal__pv__IsWorkUserrelayprovider":                            false,
+	}
+	if crawlReq.Cursor != "" {
+		vars["cursor"] = crawlReq.Cursor
+	}
+
+	variablesJSON, _ := json.Marshal(vars)
+	actorID := actiontest.ActorIDFromCookie(cookie)
+
+	fd := url.Values{}
+	fd.Set("av", actorID)
+	fd.Set("__user", actorID)
+	fd.Set("__a", "1")
+	fd.Set("fb_dtsg", sd.DTSG)
+	fd.Set("fb_api_caller_class", "RelayModern")
+	fd.Set("fb_api_req_friendly_name", "CometProfilePostsTabFeedPaginationQuery")
+	fd.Set("variables", string(variablesJSON))
+	fd.Set("doc_id", docID)
+	fd.Set("lsd", sd.LSD)
+	fd.Set("server_timestamps", "true")
+
+	hReq, _ := http.NewRequest("POST", "https://www.facebook.com/api/graphql/", strings.NewReader(fd.Encode()))
+	hReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	hReq.Header.Set("Cookie", actiontest.SanitizeCookie(cookie))
+	hReq.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+	hReq.Header.Set("X-FB-LSD", sd.LSD)
+	hReq.Header.Set("X-ASBD-ID", "129477")
+	hReq.Header.Set("X-FB-Friendly-Name", "CometProfilePostsTabFeedPaginationQuery")
+	hReq.Header.Set("Sec-Fetch-Dest", "empty")
+	hReq.Header.Set("Sec-Fetch-Mode", "cors")
+	hReq.Header.Set("Sec-Fetch-Site", "same-origin")
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(hReq)
+	if err != nil {
+		return nil, "", err
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	_ = os.WriteFile("data/last_graphql_page_debug.json", body, 0644)
+	fmt.Printf("[PAGE] Response status: %d, size: %d bytes\n", resp.StatusCode, len(body))
+	if len(body) < 1000 {
+		fmt.Printf("[PAGE] Raw response: %s\n", string(body))
+	}
+
+	return h.parseGraphQLBody(string(body))
 }
 
 func (h *CrawlHandler) ExtractTextFromComet(cometSections map[string]interface{}) string {
@@ -496,9 +575,20 @@ func (h *CrawlHandler) RunCrawl(req CrawlRequest) CrawlResponse {
 		}
 	}
 
+	// Nếu target là username (không phải số) → resolve sang numeric ID
+	// vì GraphQL của Facebook cần numeric ID
+	if finalTarget != "" {
+		resolved := h.resolveProfileID(finalTarget, cookie)
+		if resolved != "" && resolved != finalTarget {
+			fmt.Printf("[CRAWL] Resolved '%s' → numeric ID: %s\n", finalTarget, resolved)
+			finalTarget = resolved
+		}
+	}
+
 	crawlReq := CrawlRequest{
 		TargetID: finalTarget,
 		Limit:    req.Limit,
+		Type:     req.Type,
 	}
 
 	var allResults []CrawlPostEntity
@@ -506,7 +596,15 @@ func (h *CrawlHandler) RunCrawl(req CrawlRequest) CrawlResponse {
 	cursor := ""
 	for len(allResults) < req.Limit {
 		crawlReq.Cursor = cursor
-		gPosts, nextCur, err := h.fetchPostsViaGraphQL(crawlReq, cookie)
+		var gPosts []CrawlPostEntity
+		var nextCur string
+		var err error
+		
+		if req.Type == "page" {
+			gPosts, nextCur, err = h.fetchPostsViaGraphQLPage(crawlReq, cookie)
+		} else {
+			gPosts, nextCur, err = h.fetchPostsViaGraphQL(crawlReq, cookie)
+		}
 		if err != nil {
 			fmt.Printf("[CRAWL] GraphQL Error: %v\n", err)
 			break
@@ -604,3 +702,5 @@ func (h *CrawlHandler) fetchHTML(targetURL, cookie, ua string) (int, string, str
 	body, _ := io.ReadAll(resp.Body)
 	return resp.StatusCode, string(body), resp.Request.URL.String(), nil
 }
+
+

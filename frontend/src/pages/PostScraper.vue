@@ -127,13 +127,14 @@ const handleCrawl = async () => {
           <div class="form-group flex-1">
             <label>Nơi muốn quét:</label>
             <select v-model="targetType" class="select-box">
-              <option value="profile">Trang cá nhân / Fanpage khác</option>
-              <option value="group">Trong Hội nhóm (Group)</option>
+              <option value="profile">Trang cá nhân (Profile)</option>
+              <option value="page">Fanpage / Trang (Page)</option>
+              <option value="group">Hội nhóm (Group)</option>
             </select>
           </div>
           <div class="form-group flex-2">
             <label>Link hoặc ID mục tiêu:</label>
-            <input type="text" v-model="targetId" placeholder="Dán link hoặc ID người khác vào đây..." />
+            <input type="text" v-model="targetId" :placeholder="targetType === 'page' ? 'Dán link hoặc ID Fanpage...' : 'Dán link hoặc ID người khác...'" />
           </div>
         </div>
 
