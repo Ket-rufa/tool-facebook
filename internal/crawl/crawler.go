@@ -71,6 +71,7 @@ type profileAboutTokens struct {
 	SectionToken      string
 	RawSectionToken   string
 	AppSectionFeedKey string
+	CollectionToken   string
 	AboutURL          string
 	InfoAllURL        string
 }
@@ -1126,6 +1127,7 @@ func (h *CrawlHandler) buildProfileAboutVars(uid string, tokens profileAboutToke
 	appSectionFeedKey := fmt.Sprintf("ProfileCometAppSectionFeed_timeline_nav_app_sections__%s", uid)
 	var rawSectionToken interface{}
 	var sectionToken interface{}
+	var collectionToken interface{}
 
 	if tokens.RawSectionToken != "" {
 		rawSectionToken = tokens.RawSectionToken
@@ -1137,10 +1139,13 @@ func (h *CrawlHandler) buildProfileAboutVars(uid string, tokens profileAboutToke
 	if tokens.SectionToken != "" {
 		sectionToken = tokens.SectionToken
 	}
+	if tokens.CollectionToken != "" {
+		collectionToken = tokens.CollectionToken
+	}
 
 	return map[string]interface{}{
 		"appSectionFeedKey": appSectionFeedKey,
-		"collectionToken":   nil,
+		"collectionToken":   collectionToken,
 		"pageID":            uid,
 		"rawSectionToken":   rawSectionToken,
 		"scale":             1,
@@ -1218,6 +1223,16 @@ func (h *CrawlHandler) extractAboutTokensFromSectionContainer(container map[stri
 		if tokens.SectionToken == "" {
 			if id, _ := section["id"].(string); id != "" {
 				tokens.SectionToken = id
+			}
+		}
+		if tokens.CollectionToken == "" {
+			for _, colNode := range h.connectionNodes(h.getMap(section["all_collections"])) {
+				if h.isAboutSection(colNode) {
+					if id, _ := colNode["id"].(string); id != "" {
+						tokens.CollectionToken = id
+					}
+					break
+				}
 			}
 		}
 		if tokens.AboutURL == "" {
@@ -1336,48 +1351,96 @@ func (h *CrawlHandler) walkProfileValue(value interface{}, info *ProfileInfo, de
 
 func (h *CrawlHandler) applyProfileEntity(node map[string]interface{}, info *ProfileInfo) {
 	id, _ := node["id"].(string)
+	typename, _ := node["__typename"].(string)
+
+	// LOG: Bắt đầu xử lý node
+	if typename != "" || id != "" {
+		// fmt.Printf("[DEBUG-WALK] Typename: %s, ID: %s\n", typename, id)
+	}
+
+	// Chỉ chấp nhận info từ node khớp UID (nếu đã biết UID)
+	// Hoặc nếu node là User/Page thì mới được lấy tên chính
 	if info.UID != "" && id != "" && id != info.UID {
 		return
 	}
-	if info.UID != "" && id == "" {
+	if info.UID != "" && id == "" && (typename == "" || (typename != "User" && typename != "Page")) {
+		// Nếu không có ID và cũng không phải User/Page thì không được lấy làm info chính
 		return
 	}
 
-	if name, ok := node["name"].(string); ok && info.Name == "" && !h.isAboutSection(map[string]interface{}{"name": name}) {
-		info.Name = name
+	// Trích xuất TÊN (NAME)
+	if name, ok := node["name"].(string); ok && info.Name == "" {
+		// Kiểm tra thêm để chắc chắn đây là User/Page chứ không phải tên trường hay tên công ty
+		isMeaningful := false
+		if typename == "User" || typename == "Page" {
+			isMeaningful = true
+		} else if id == info.UID && id != "" {
+			isMeaningful = true
+		}
+
+		if isMeaningful && !h.isAboutSection(map[string]interface{}{"name": name}) {
+			info.Name = name
+			fmt.Printf("[SCAN] >> Đã tìm thấy Tên: %s\n", name)
+		}
 	}
+
+	// Trích xuất GIỚI TÍNH
 	if gender, ok := node["gender"].(string); ok && info.Gender == "" {
 		info.Gender = gender
+		fmt.Printf("[SCAN] >> Đã tìm thấy Giới tính: %s\n", gender)
 	}
+
+	// Trích xuất NGÀY SINH
 	if bday := h.getMap(node["birth_date"]); bday != nil && info.Birthday == "" {
 		day := fmt.Sprintf("%v", bday["day"])
 		month := fmt.Sprintf("%v", bday["month"])
 		year := fmt.Sprintf("%v", bday["year"])
 		if day != "<nil>" && month != "<nil>" && year != "<nil>" {
 			info.Birthday = fmt.Sprintf("%s/%s/%s", day, month, year)
+			fmt.Printf("[SCAN] >> Đã tìm thấy Ngày sinh: %s\n", info.Birthday)
 		}
 	}
+
+	// Trích xuất FOLLOWERS
 	if followers := h.getMap(node["followers"]); followers != nil && info.Followers == "" {
 		if count, ok := followers["count"].(float64); ok {
 			info.Followers = fmt.Sprintf("%.0f", count)
+			fmt.Printf("[SCAN] >> Đã tìm thấy Followers: %s\n", info.Followers)
 		}
 	}
+
+	// Trích xuất BIO
 	if bio := h.getMap(node["bio_text"]); bio != nil && info.Bio == "" {
 		info.Bio = h.findText(bio)
+		fmt.Printf("[SCAN] >> Đã tìm thấy Tiểu sử: %s\n", info.Bio)
 	}
+
+	// Trích xuất VỊ TRÍ
 	if info.CurrentCity == "" {
-		info.CurrentCity = h.findText(h.getMap(node["current_city"]))
+		if city := h.findText(h.getMap(node["current_city"])); city != "" {
+			info.CurrentCity = city
+			fmt.Printf("[SCAN] >> Đã tìm thấy Thành phố hiện tại: %s\n", city)
+		}
 	}
 	if info.Hometown == "" {
-		info.Hometown = h.findText(h.getMap(node["hometown"]))
+		if home := h.findText(h.getMap(node["hometown"])); home != "" {
+			info.Hometown = home
+			fmt.Printf("[SCAN] >> Đã tìm thấy Quê quán: %s\n", home)
+		}
 	}
 	if info.Relationship == "" {
-		info.Relationship = h.findText(h.getMap(node["relationship_status"]))
+		if rel := h.findText(h.getMap(node["relationship_status"])); rel != "" {
+			info.Relationship = rel
+			fmt.Printf("[SCAN] >> Đã tìm thấy MQH: %s\n", rel)
+		}
 	}
+
+	// Trích xuất AVATAR
 	if info.ProfilePicture == "" {
 		for _, key := range []string{"profile_picture", "profile_picture_depth_0", "profile_picture_depth_1", "profile_photo"} {
 			if uri := h.extractURI(h.getMap(node[key])); uri != "" {
 				info.ProfilePicture = uri
+				fmt.Printf("[SCAN] >> Đã tìm thấy Avatar (URL dài)\n")
 				break
 			}
 		}
@@ -1463,19 +1526,24 @@ func (h *CrawlHandler) applyCollectionItem(collectionTitle string, item map[stri
 	switch normalizedCollection {
 	case "work", "công việc":
 		info.Work = appendUnique(info.Work, value)
+		fmt.Printf("[SCAN] >> Đã tìm thấy Công việc: %s\n", value)
 	case "education", "học vấn":
 		info.Education = appendUnique(info.Education, value)
+		fmt.Printf("[SCAN] >> Đã tìm thấy Học vấn: %s\n", value)
 	case "current city", "thành phố hiện tại":
 		if info.CurrentCity == "" {
 			info.CurrentCity = value
+			fmt.Printf("[SCAN] >> Đã tìm thấy Thành phố hiện tại: %s\n", value)
 		}
 	case "hometown", "quê quán":
 		if info.Hometown == "" {
 			info.Hometown = value
+			fmt.Printf("[SCAN] >> Đã tìm thấy Quê quán: %s\n", value)
 		}
 	case "relationship", "tình trạng mối quan hệ":
 		if info.Relationship == "" {
 			info.Relationship = value
+			fmt.Printf("[SCAN] >> Đã tìm thấy MQH: %s\n", value)
 		}
 	case "places lived", "nơi từng sống":
 		switch normalizeLabel(label) {

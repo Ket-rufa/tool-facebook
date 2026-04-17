@@ -13,8 +13,31 @@ import (
 	"github.com/yourname/tool-facebook/internal/actiontest"
 )
 
-// resolveProfileID chuyển username/vanity URL sang numeric profile ID
 func (h *CrawlHandler) resolveProfileID(target, cookie string) string {
+	target = strings.TrimSpace(target)
+
+	// Xử lý trường hợp đầu vào là một đường link Facebook
+	if strings.Contains(target, "facebook.com") || strings.HasPrefix(target, "http") {
+		// Trích xuất ID trực tiếp từ tham số 'id=' (ví dụ: profile.php?id=123)
+		if strings.Contains(target, "id=") {
+			re := regexp.MustCompile(`[?&]id=(\d+)`)
+			if m := re.FindStringSubmatch(target); len(m) > 1 {
+				target = m[1]
+			}
+		} else {
+			// Thử dùng net/url để lấy path (ví dụ: facebook.com/zuck -> zuck)
+			if u, err := url.Parse(target); err == nil {
+				path := strings.Trim(u.Path, "/")
+				if path != "" && !strings.Contains(path, "profile.php") {
+					parts := strings.Split(path, "/")
+					if len(parts) > 0 {
+						target = parts[0]
+					}
+				}
+			}
+		}
+	}
+
 	isNum := true
 	for _, ch := range target {
 		if ch < '0' || ch > '9' {
@@ -22,7 +45,7 @@ func (h *CrawlHandler) resolveProfileID(target, cookie string) string {
 			break
 		}
 	}
-	if isNum {
+	if isNum && len(target) > 3 {
 		return target
 	}
 
