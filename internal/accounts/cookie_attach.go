@@ -9,8 +9,6 @@ import (
 	"regexp"
 	"strings"
 	"time"
-
-	"github.com/google/uuid"
 )
 
 var (
@@ -134,13 +132,13 @@ func (s *AccountService) ProcessCookieAttachFlow(cookieValue string) (AttachFlow
 	displayName := fmt.Sprintf("Clone %d", cloneIndex)
 
 	preview := &AccountProfile{
-		ID:            "acc_" + uuid.New().String()[:8],
+		ID:            "acc_" + uidExtracted,
 		AccountID:     uidExtracted,
 		DisplayName:   displayName,
 		Avatar:        fmt.Sprintf("https://graph.facebook.com/%s/picture?type=large", uidExtracted), // Avatar chuẩn FB
 		AccountType:   string(AccountTypeProfile),
 		Provider:      "Facebook",
-		SessionID:     "sess_cookie",
+		SessionID:     "sess_" + uidExtracted,
 		SessionStatus: string(SessionActive),
 		AttachedAt:    time.Now().Format(time.RFC3339),
 		LastCheckedAt: time.Now().Format("2006-01-02 15:04:05"),

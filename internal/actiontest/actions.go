@@ -1693,12 +1693,18 @@ func (h *ActionHandler) CreatePost(req CreatePostRequest) CreatePostResponse {
 	// Lấy actor_id (c_user) từ cookie
 	actorID := ""
 	fbInfo, err := h.fbDataStore.Get(accountID)
+	// FALLBACK: Nếu không tìm thấy theo ID có tiền tố acc_, thử tìm theo UID nguyên bản
+	if (err != nil || fbInfo == nil) && strings.HasPrefix(accountID, "acc_") {
+		rawUID := strings.TrimPrefix(accountID, "acc_")
+		fbInfo, err = h.fbDataStore.Get(rawUID)
+	}
+
 	if err != nil || fbInfo == nil {
 		resp := CreatePostResponse{
 			Success: false, Status: StatusSessionInvalid,
 			Action: "create_post", AccountID: accountID, AccountDisplayName: displayName, PostText: postText,
 			DryRun:     false,
-			Message:    fmt.Sprintf("Lỗi: %s - Không tìm thấy dữ liệu FB (Cookie/fb_dtsg). Cập nhật vào facebook_data.json!", err),
+			Message:    fmt.Sprintf("Lỗi: %v - Không tìm thấy dữ liệu FB (Cookie/fb_dtsg) cho ID '%s'. Hãy thử thêm lại tài khoản!", err, accountID),
 			ExecutedAt: time.Now(),
 		}
 		AddLog(logFromPost(resp, resp.Message))

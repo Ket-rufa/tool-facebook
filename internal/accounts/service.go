@@ -1,19 +1,42 @@
 package accounts
 
 import (
+	"context"
 	"fmt"
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/yourname/tool-facebook/internal/fbdata"
 )
 
 // AccountService là service chính - được Wails bind vào frontend
 // Đây là điểm duy nhất frontend gọi vào backend accounts module.
 type AccountService struct {
-	store         Store
-	flowManager   *AttachFlowManager
-	windowHandler *AttachWindowHandler
-	sessionCheck  *SessionChecker
+	store            Store
+	fbStore          fbdata.Store
+	flowManager      *AttachFlowManager
+	windowHandler    *AttachWindowHandler
+	sessionCheck     *SessionChecker
+	automator        *LoginAutomator
+	requestAutomator *RequestAutomator
+}
+
+func (s *AccountService) syncToLegacyStore(profile AccountProfile) {
+	if s.fbStore == nil {
+		return
+	}
+
+	fbData := fbdata.FBAccountData{
+		Info: fbdata.FBInfo{
+			Name:     profile.DisplayName,
+			Cookie:   profile.Cookie,
+			FbDtsg:   profile.FbDtsg,
+		},
+	}
+	// Lưu dưới cả 2 khóa để đảm bảo các module cũ (dùng UID) và mới (dùng acc_UID) đều tìm thấy
+	s.fbStore.Save(profile.AccountID, fbData)
+	s.fbStore.Save(profile.ID, fbData)
 }
 
 // NewAccountService tạo service với data dir, tự tạo store
@@ -22,16 +45,21 @@ func NewAccountService(dataDir string) (*AccountService, error) {
 	if err != nil {
 		return nil, fmt.Errorf("lỗi khởi tạo store: %w", err)
 	}
-	return NewAccountServiceWithStore(store), nil
+	// Khởi tạo cả FB Store để đồng bộ dữ liệu
+	fbStore, _ := fbdata.NewJSONStore(dataDir)
+	return NewAccountServiceWithStore(store, fbStore), nil
 }
 
 // NewAccountServiceWithStore tạo service với store đã khởi tạo sẵn (để share store)
-func NewAccountServiceWithStore(store *JSONStore) *AccountService {
+func NewAccountServiceWithStore(store *JSONStore, fbStore fbdata.Store) *AccountService {
 	return &AccountService{
-		store:         store,
-		flowManager:   NewAttachFlowManager(),
-		windowHandler: NewAttachWindowHandler(""),
-		sessionCheck:  NewSessionChecker(store),
+		store:            store,
+		fbStore:          fbStore,
+		flowManager:      NewAttachFlowManager(),
+		windowHandler:    NewAttachWindowHandler(""),
+		sessionCheck:     NewSessionChecker(store),
+		automator:        NewLoginAutomator(),
+		requestAutomator: NewRequestAutomator(),
 	}
 }
 
@@ -86,6 +114,7 @@ func (s *AccountService) AddAccountProfile(payload AccountProfile) []AccountProf
 		payload.LastCheckedAt = time.Now().Format("2006-01-02 15:04:05")
 	}
 	s.store.Add(payload)
+	s.syncToLegacyStore(payload)
 	return s.ListAccounts()
 }
 
@@ -104,35 +133,102 @@ func (s *AccountService) StartAccountAttachFlow() AttachFlowStatusResponse {
 		}
 	}
 
-	// Chuyển sang waiting_auth trước khi mở cửa sổ
+	// Chuyển sang waiting_auth
 	s.flowManager.SetWaitingAuth(flow.FlowID)
 
-	// [THẬT] Mở browser hệ thống với URL đăng nhập
-	if err := s.windowHandler.OpenLoginWindow(flow.FlowID); err != nil {
-		s.flowManager.Cancel(flow.FlowID)
-		return AttachFlowStatusResponse{
-			FlowID:  flow.FlowID,
-			State:   string(FlowFailed),
-			Message: "Không thể mở cửa sổ đăng nhập: " + err.Error(),
+	// Chạy automation trong goroutine để không block Wails
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		defer cancel()
+
+		result, err := s.automator.StartLogin(ctx)
+		if err != nil {
+			fmt.Printf("[LOGIN] Lỗi automation: %v\n", err)
+			s.flowManager.SetFailed(flow.FlowID, "Lỗi đăng nhập: "+err.Error())
+			return
 		}
-	}
 
-	// Đếm số account hiện có để đặt tên Clone N+1
-	existing, _ := s.store.List()
-	cloneIndex := len(existing) + 1
+		// Tạo preview từ dữ liệu thật
+		preview := &AccountProfile{
+			ID:            "acc_" + result.UID, // Dùng UID làm prefix ID luôn
+			AccountID:     result.UID,
+			DisplayName:   result.Name,
+			Avatar:        fmt.Sprintf("https://ui-avatars.com/api/?name=%s&background=dbeafe&color=1d4ed8", url.QueryEscape(result.Name)),
+			AccountType:   string(AccountTypeProfile),
+			Provider:      "Facebook",
+			SessionID:     "sess_" + result.UID,
+			SessionStatus: string(SessionActive),
+			Cookie:        result.Cookie,
+			FbDtsg:        result.Dtsg,
+			AttachedAt:    time.Now().Format(time.RFC3339),
+			LastCheckedAt: time.Now().Format("2006-01-02 15:04:05"),
+			Note:          "Được thêm tự động qua trình duyệt.",
+		}
 
-	// [PLACEHOLDER] Tự động tạo preview theo số thứ tự
-	preview := BuildMockAccountPreview(flow.FlowID, cloneIndex)
-	s.flowManager.SetAuthenticated(flow.FlowID, preview)
+		// Cập nhật flow status sang Authenticated để frontend hiển thị Confirm
+		s.flowManager.SetAuthenticated(flow.FlowID, preview)
+		fmt.Printf("[LOGIN] Thành công: %s (%s)\n", result.Name, result.UID)
+	}()
 
 	resp, _ := s.flowManager.GetStatus(flow.FlowID)
-	if resp == nil {
-		return AttachFlowStatusResponse{
-			FlowID:  flow.FlowID,
-			State:   string(FlowWaitingAuth),
-			Message: "Đang chờ xác thực...",
-		}
+	return *resp
+}
+
+// GetCookieFromCredentials thực hiện đăng nhập ngầm và chỉ trả về chuỗi Cookie (không tạo flow)
+func (s *AccountService) GetCookieFromCredentials(email, password, twoFactorKey string) (string, error) {
+	fmt.Printf("[SERVICE] Đang lấy Cookie cho: %s\n", email)
+	result, err := s.requestAutomator.Login(email, password, twoFactorKey)
+	if err != nil {
+		return "", err
 	}
+	if !result.Success {
+		return "", fmt.Errorf(result.Message)
+	}
+	return result.Cookie, nil
+}
+
+// LoginByRequest thực hiện đăng nhập qua trình duyệt tự động (Chrome)
+func (s *AccountService) LoginByRequest(email, password, twoFactorKey string) AttachFlowStatusResponse {
+	// Khởi tạo flow mới
+	flow, err := s.flowManager.Start()
+	if err != nil {
+		return AttachFlowStatusResponse{State: string(FlowFailed), Message: err.Error()}
+	}
+
+	s.flowManager.SetWaitingAuth(flow.FlowID)
+
+	// Chạy automation trong goroutine (hiện trình duyệt)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		defer cancel()
+
+		result, err := s.automator.AutomatedLogin(ctx, email, password, twoFactorKey)
+		if err != nil {
+			s.flowManager.SetFailed(flow.FlowID, "Lỗi đăng nhập: "+err.Error())
+			return
+		}
+
+		// Tạo profile
+		preview := &AccountProfile{
+			ID:            "acc_" + result.UID,
+			AccountID:     result.UID,
+			DisplayName:   result.Name,
+			Avatar:        fmt.Sprintf("https://ui-avatars.com/api/?name=%s&background=dbeafe&color=1d4ed8", url.QueryEscape(result.Name)),
+			AccountType:   string(AccountTypeProfile),
+			Provider:      "Facebook (Auto)",
+			SessionID:     "sess_" + result.UID,
+			SessionStatus: string(SessionActive),
+			Cookie:        result.Cookie,
+			FbDtsg:        result.Dtsg,
+			AttachedAt:    time.Now().Format(time.RFC3339),
+			LastCheckedAt: time.Now().Format("2006-01-02 15:04:05"),
+			Note:          "Được thêm tự động qua trình duyệt.",
+		}
+
+		s.flowManager.SetAuthenticated(flow.FlowID, preview)
+	}()
+
+	resp, _ := s.flowManager.GetStatus(flow.FlowID)
 	return *resp
 }
 
@@ -169,6 +265,9 @@ func (s *AccountService) CompleteAccountAttachFlow(flowID string, customName str
 	profile.LastCheckedAt = time.Now().Format("2006-01-02 15:04:05")
 	profile.SessionStatus = string(SessionActive)
 	s.store.Add(profile)
+
+	// Đồng bộ sang facebook_data.json
+	s.syncToLegacyStore(profile)
 
 	// Dọn sạch flow sau khi hoàn tất
 	defer s.flowManager.Cleanup(flowID)

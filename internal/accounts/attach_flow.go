@@ -65,6 +65,20 @@ func (m *AttachFlowManager) SetAuthenticated(flowID string, preview *AccountProf
 	return nil
 }
 
+// SetFailed chuyển trạng thái khi flow gặp lỗi
+func (m *AttachFlowManager) SetFailed(flowID string, message string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	flow, ok := m.flows[flowID]
+	if !ok {
+		return fmt.Errorf("không tìm thấy flow: %s", flowID)
+	}
+	flow.State = FlowFailed
+	flow.Message = message
+	flow.UpdatedAt = time.Now()
+	return nil
+}
+
 // Complete hoàn tất flow
 func (m *AttachFlowManager) Complete(flowID string) (*AttachFlow, error) {
 	m.mu.Lock()

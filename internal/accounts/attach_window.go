@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/pkg/browser"
 )
 
@@ -46,16 +45,16 @@ func (h *AttachWindowHandler) OpenLoginWindow(flowID string) error {
 // BuildMockAccountPreview tạo account preview với tên tự động theo số thứ tự
 // [PLACEHOLDER]: Sẽ thay bằng dữ liệu từ OAuth callback thật
 func BuildMockAccountPreview(flowID string, cloneIndex int) *AccountProfile {
-	uid := uuid.New().String()[:8]
+	uid := "100" + fmt.Sprintf("%08d", time.Now().UnixMilli()%100000000)
 	displayName := fmt.Sprintf("Clone %d", cloneIndex)
 
 	return &AccountProfile{
 		ID:            "acc_" + uid,
-		AccountID:     "100" + fmt.Sprintf("%08d", time.Now().UnixMilli()%100000000),
+		AccountID:     uid,
 		DisplayName:   displayName,
 		Avatar:        fmt.Sprintf("https://ui-avatars.com/api/?name=C%d&background=dbeafe&color=1d4ed8", cloneIndex),
 		AccountType:   string(AccountTypeProfile),
-		Provider:      "Facebook",
+		Provider:      "Facebook (Mock)",
 		SessionID:     "sess_" + uid,
 		SessionStatus: string(SessionActive),
 		AttachedAt:    time.Now().Format(time.RFC3339),

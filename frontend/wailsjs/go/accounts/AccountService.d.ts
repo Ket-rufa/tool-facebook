@@ -14,9 +14,13 @@ export function CompleteAccountAttachFlow(arg1:string,arg2:string):Promise<Array
 
 export function GetAttachFlowStatus(arg1:string):Promise<accounts.AttachFlowStatusResponse>;
 
+export function GetCookieFromCredentials(arg1:string,arg2:string,arg3:string):Promise<string>;
+
 export function GetDefaultAccount():Promise<accounts.AccountProfile>;
 
 export function ListAccounts():Promise<Array<accounts.AccountProfile>>;
+
+export function LoginByRequest(arg1:string,arg2:string,arg3:string):Promise<accounts.AttachFlowStatusResponse>;
 
 export function ProcessCookieAttachFlow(arg1:string):Promise<accounts.AttachFlowStatusResponse>;
 

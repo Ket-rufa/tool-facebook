@@ -37,8 +37,8 @@ func main() {
 		log.Fatalf("Không thể khởi tạo fb data store: %v", err)
 	}
 
-	// Tạo AccountService dùng store đã tạo
-	accountService := accounts.NewAccountServiceWithStore(store)
+	// Tạo AccountService dùng store đã tạo và truyền thêm fbStore để đồng bộ
+	accountService := accounts.NewAccountServiceWithStore(store, fbStore)
 
 	// Khởi tạo action handler với cùng store và fbStore
 	sessionHandler := actiontest.NewSessionHandler()

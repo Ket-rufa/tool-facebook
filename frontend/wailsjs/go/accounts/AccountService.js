@@ -26,12 +26,20 @@ export function GetAttachFlowStatus(arg1) {
   return window['go']['accounts']['AccountService']['GetAttachFlowStatus'](arg1);
 }
 
+export function GetCookieFromCredentials(arg1, arg2, arg3) {
+  return window['go']['accounts']['AccountService']['GetCookieFromCredentials'](arg1, arg2, arg3);
+}
+
 export function GetDefaultAccount() {
   return window['go']['accounts']['AccountService']['GetDefaultAccount']();
 }
 
 export function ListAccounts() {
   return window['go']['accounts']['AccountService']['ListAccounts']();
+}
+
+export function LoginByRequest(arg1, arg2, arg3) {
+  return window['go']['accounts']['AccountService']['LoginByRequest'](arg1, arg2, arg3);
 }
 
 export function ProcessCookieAttachFlow(arg1) {

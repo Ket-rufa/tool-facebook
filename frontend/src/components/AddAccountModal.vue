@@ -6,7 +6,9 @@ import {
   GetAttachFlowStatus,
   CompleteAccountAttachFlow,
   CancelAccountAttachFlow,
-  ProcessCookieAttachFlow
+  ProcessCookieAttachFlow,
+  LoginByRequest,
+  GetCookieFromCredentials
 } from '../../wailsjs/go/accounts/AccountService'
 
 const emit = defineEmits(['close', 'complete'])
@@ -21,11 +23,21 @@ const attachMethod = ref('browser')
 const cookieString = ref('')
 const isParsingCookie = ref(false)
 
+// Dành cho Request Login
+const email = ref('')
+const password = ref('')
+const twoFactorKey = ref('')
+const isRequestLoggingIn = ref(false)
+const isExtractingCookie = ref(false)
+const extractedCookie = ref('')
+
 function handleStartFlow() {
   if (attachMethod.value === 'browser') {
     currentStep.value = 2
-  } else {
+  } else if (attachMethod.value === 'cookie') {
     currentStep.value = 2.5
+  } else {
+    currentStep.value = 2.7 // Step dành cho Request Login
   }
 }
 
@@ -47,6 +59,72 @@ async function handleCookieSubmit() {
   }
 }
 
+async function handleExtractCookie() {
+  if (!email.value || !password.value) {
+    errorMsg.value = 'Vui lòng nhập Email và Mật khẩu để lấy Cookie.'
+    return
+  }
+  isExtractingCookie.value = true
+  errorMsg.value = ''
+  extractedCookie.value = ''
+  try {
+    const cookie = await GetCookieFromCredentials(email.value, password.value, twoFactorKey.value)
+    extractedCookie.value = cookie
+    isExtractingCookie.value = false
+  } catch (e: any) {
+    errorMsg.value = e || 'Lỗi khi lấy Cookie. Vui lòng kiểm tra lại tài khoản.'
+    isExtractingCookie.value = false
+  }
+}
+
+function handleUseExtractedCookie() {
+  cookieString.value = extractedCookie.value
+  currentStep.value = 2.5 // Chuyển sang tab nhập Cookie
+}
+
+async function handleRequestLogin() {
+  if (!email.value || !password.value) {
+    errorMsg.value = 'Vui lòng nhập đầy đủ Email và Mật khẩu.'
+    return
+  }
+  isRequestLoggingIn.value = true
+  errorMsg.value = ''
+  try {
+    // Chúng ta vẫn có thể dùng LoginByRequest (vốn dùng Chrome Auto) 
+    // hoặc chuyển hẳn sang flow Extract -> Cookie. 
+    // Ở đây tôi giữ LoginByRequest như một phương án "Auto hoàn toàn" cho user.
+    const resp = await LoginByRequest(email.value, password.value, twoFactorKey.value)
+    flowId.value = resp.flowId
+    
+    // Poll tương tự như browser login
+    let attempts = 0
+    const maxAttempts = 100
+    const poll = async () => {
+      if (attempts++ >= maxAttempts) {
+        errorMsg.value = 'Hết thời gian chờ đăng nhập.'
+        isRequestLoggingIn.value = false
+        return
+      }
+      const status = await GetAttachFlowStatus(flowId.value)
+      flowPreview.value = status.accountPreview || flowPreview.value
+      if (status.state === 'authenticated') {
+        editableName.value = flowPreview.value?.displayName || ''
+        isRequestLoggingIn.value = false
+        currentStep.value = 3
+      } else if (status.state === 'failed') {
+        errorMsg.value = status.message || 'Đăng nhập thất bại.'
+        isRequestLoggingIn.value = false
+      } else {
+        setTimeout(poll, 1000)
+      }
+    }
+    await poll()
+  } catch (e: any) {
+    errorMsg.value = e?.message || 'Lỗi kết nối hệ thống.'
+    isRequestLoggingIn.value = false
+  }
+}
+
 async function handleOpenLoginWindow() {
   isOpeningWindow.value = true
   errorMsg.value = ''
@@ -58,7 +136,7 @@ async function handleOpenLoginWindow() {
 
     // Poll trạng thái để đảm bảo flow đã Authenticated
     let attempts = 0
-    const maxAttempts = 20
+    const maxAttempts = 600 // Tăng lên 600 lần (~8-10 phút) để user thong thả đăng nhập/2FA
     const poll = async () => {
       if (attempts++ >= maxAttempts) {
         errorMsg.value = 'Hết thời gian chờ. Vui lòng thử lại.'
@@ -142,8 +220,17 @@ async function handleCancel() {
                 <input type="radio" value="cookie" v-model="attachMethod" class="sr-only" />
                 <span class="mc-icon" v-html="icons.code"></span>
                 <div class="mc-content">
-                  <div class="mc-title">Nhập Cookie (Khuyên dùng)</div>
-                  <div class="mc-desc">Dán chuẩn Cookie để hỗ trợ các chức năng Execute (Real Run) sau này.</div>
+                  <div class="mc-title">Nhập Cookie (Thủ công)</div>
+                  <div class="mc-desc">Dán chuỗi Cookie từ trình duyệt.</div>
+                </div>
+              </label>
+
+              <label class="m-card" :class="{ 'active': attachMethod === 'fast' }">
+                <input type="radio" value="fast" v-model="attachMethod" class="sr-only" />
+                <span class="mc-icon" v-html="icons.command"></span>
+                <div class="mc-content">
+                  <div class="mc-title">Đăng nhập bằng Request (Nhanh)</div>
+                  <div class="mc-desc">Nhập User/Pass/2FA để tool tự động đăng nhập ngầm.</div>
                 </div>
               </label>
             </div>
@@ -196,6 +283,56 @@ async function handleCancel() {
               <button class="btn btn-outline" @click="currentStep = 1">Quay lại</button>
               <button class="btn btn-primary" @click="handleCookieSubmit" :disabled="!cookieString.trim() || isParsingCookie">
                 <span class="spinner" v-if="isParsingCookie"></span> Xác minh Cookie
+              </button>
+            </div>
+          </div>
+
+          <!-- Step 2.7: Request Login Form -->
+          <div v-if="currentStep === 2.7" class="step-pane">
+            <h3>Đăng nhập qua HTTP Request</h3>
+            <p>Nhập thông tin tài khoản Facebook. Tool sẽ tự động xử lý bảo mật.</p>
+            
+            <div class="form-group-incard">
+              <label>Email / Số điện thoại / UID</label>
+              <input v-model="email" type="text" class="name-input" placeholder="Ví dụ: 1000123456789" :disabled="isRequestLoggingIn" />
+            </div>
+
+            <div class="form-group-incard">
+              <label>Mật khẩu</label>
+              <input v-model="password" type="password" class="name-input" placeholder="••••••••" :disabled="isRequestLoggingIn" />
+            </div>
+
+            <div class="form-group-incard">
+              <label>Khóa 2FA (Tùy chọn)</label>
+              <div class="hint">Nếu nick có 2FA, hãy dán mã Secret Key vào đây để tool tự giải mã OTP.</div>
+              <input v-model="twoFactorKey" type="text" class="name-input" placeholder="J3XW..." :disabled="isRequestLoggingIn" />
+            </div>
+
+            <div v-if="errorMsg" class="error-msg">{{ errorMsg }}</div>
+
+            <!-- Kết quả trích xuất Cookie -->
+            <div v-if="extractedCookie" class="extracted-cookie-box mt-4">
+              <div class="ec-header">
+                <span class="text-success" v-html="icons.checkBadge"></span>
+                <strong>Đã lấy được Cookie!</strong>
+              </div>
+              <textarea readonly class="cookie-input mt-2" style="font-size: 11px; height: 60px;">{{ extractedCookie }}</textarea>
+              <button class="btn btn-primary mt-2 w-full" @click="handleUseExtractedCookie">
+                🚀 Dùng Cookie này để đăng nhập
+              </button>
+            </div>
+
+            <div class="m-actions">
+              <button class="btn btn-outline" @click="currentStep = 1">Quay lại</button>
+              
+              <button class="btn btn-outline-primary" @click="handleExtractCookie" :disabled="isExtractingCookie || isRequestLoggingIn">
+                <span class="spinner" v-if="isExtractingCookie"></span>
+                {{ isExtractingCookie ? 'Đang trích xuất...' : '🍪 Lấy Cookie' }}
+              </button>
+
+              <button class="btn btn-primary" @click="handleRequestLogin" :disabled="isRequestLoggingIn" title="Tự động đăng nhập qua trình duyệt">
+                <span class="spinner" v-if="isRequestLoggingIn"></span>
+                {{ isRequestLoggingIn ? 'Đang xử lý...' : '🚀 Đăng nhập Auto' }}
               </button>
             </div>
           </div>
@@ -629,5 +766,52 @@ async function handleCancel() {
 .mc-desc {
   font-size: 12px;
   color: var(--c-text-muted);
+}
+
+.form-group-incard {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.form-group-incard label {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--c-text-main);
+}
+
+.form-group-incard .hint {
+  font-size: 11px;
+  color: var(--c-text-muted);
+  margin-bottom: 2px;
+}
+
+.extracted-cookie-box {
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  border-radius: var(--radius-sm);
+  padding: 12px;
+}
+
+.ec-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: #166534;
+}
+
+.btn-outline-primary {
+  background: white;
+  border-color: var(--c-primary);
+  color: var(--c-primary);
+}
+.btn-outline-primary:hover {
+  background: #eff6ff;
+}
+
+.w-full {
+  width: 100%;
 }
 </style>
