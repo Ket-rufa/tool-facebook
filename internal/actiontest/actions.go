@@ -604,6 +604,11 @@ func FetchSessionData(cookie string) (data SessionData, err error) {
 	}
 	defer resp.Body.Close()
 
+	finalURL := resp.Request.URL.String()
+	if strings.Contains(finalURL, "login.php") || strings.Contains(finalURL, "/login/") {
+		return data, fmt.Errorf("Facebook chuyển hướng sang trang đăng nhập (Cookie có thể đã hết hạn)")
+	}
+
 	body, _ := io.ReadAll(resp.Body)
 	bodyStr := string(body)
 
@@ -676,48 +681,42 @@ func FetchSessionData(cookie string) (data SessionData, err error) {
 		}
 	}
 
-	// Tìm LSD token (Cải tiến Regex linh hoạt hơn)
-	lsdRegex := regexp.MustCompile(`"LSD"\s*,\s*\[\s*\]\s*,\s*\{\s*"token"\s*:\s*"(.*?)"`)
-	lsdMatches := lsdRegex.FindStringSubmatch(bodyStr)
-	if len(lsdMatches) > 1 {
-		data.LSD = lsdMatches[1]
-	} else {
-		// Fallback 1: lsd":"..."
-		lsdRegexFB1 := regexp.MustCompile(`lsd":"(.*?)"`)
-		lsdMatchesFB1 := lsdRegexFB1.FindStringSubmatch(bodyStr)
-		if len(lsdMatchesFB1) > 1 {
-			data.LSD = lsdMatchesFB1[1]
-		} else {
-			// Fallback 2: type="hidden" name="lsd" value="..."
-			lsdRegexFB2 := regexp.MustCompile(`name="lsd"\s*value="(.*?)"`)
-			lsdMatchesFB2 := lsdRegexFB2.FindStringSubmatch(bodyStr)
-			if len(lsdMatchesFB2) > 1 {
-				data.LSD = lsdMatchesFB2[1]
-			}
+	// Tìm LSD token
+	lsdPatterns := []string{
+		`"LSD"\s*,\s*\[\s*\]\s*,\s*\{\s*"token"\s*:\s*"(.*?)"`,
+		`lsd":"(.*?)"`,
+		`name="lsd"\s*value="(.*?)"`,
+	}
+	for _, pattern := range lsdPatterns {
+		r := regexp.MustCompile(pattern)
+		m := r.FindStringSubmatch(bodyStr)
+		if len(m) > 1 && m[1] != "" {
+			data.LSD = m[1]
+			break
 		}
 	}
 
 	// Tìm fb_dtsg - thử nhiều pattern
-	// Debug: In context xung quanh "DTSG" để xem format thực tế
 	dtsgPatterns := []string{
-		`"(NAfv[a-zA-Z0-9_\-\:]+)"`, // Ưu tiên hàng hiệu NAfv (Chìa khóa vạn năng cho mutations)
-		`"(NAfu[a-zA-Z0-9_\-\:]+)"`, // Ưu tiên mã NAfu
-		`"DTSGInitialData"\s*,\s*\[\s*\]\s*,\s*\{\s*"token"\s*:\s*"(.+?)"`,
-		`"DTSGInitData"\s*,\s*\[\s*\]\s*,\s*\{\s*"token"\s*:\s*"(.+?)"`,
-		`"fb_dtsg"\s*:\s*"(.+?)"`,
-		`name="fb_dtsg"\s*value="(.+?)"`,
+		`"DTSGInitData"\s*,\s*\[\s*\]\s*,\s*\{\s*"token"\s*:\s*"([^"]+)"`,
+		`"DTSGInitialData"\s*,\s*\[\s*\]\s*,\s*\{\s*"token"\s*:\s*"([^"]+)"`,
+		`"fb_dtsg"\s*:\s*"([^"]+)"`,
+		`name="fb_dtsg"\s*value="([^"]+)"`,
+		`"(NAfv[a-zA-Z0-9_\-\:]{20,})"`, // NAfv code
+		`"(NAfu[a-zA-Z0-9_\-\:]{20,})"`, // NAfu code
+		`"dtsg":\{"token":"(.*?)"\}`,   // New format 2026
+		`"token":"(NAf[a-zA-Z0-9_\-\:]{20,})"`,
 	}
 	for _, pattern := range dtsgPatterns {
 		r := regexp.MustCompile(pattern)
 		m := r.FindStringSubmatch(bodyStr)
 		if len(m) > 1 {
 			token := strings.TrimSpace(m[1])
-			if token == "" {
+			if token == "" || len(token) < 5 {
 				continue
 			}
-			// Giữ nguyên token full (kể cả :n:timestamp nếu có).
 			data.DTSG = token
-			fmt.Printf("[INFO] Đã lấy được fb_dtsg mới (pattern: %s): %s\n", pattern[:min(20, len(pattern))], data.DTSG[:min(20, len(data.DTSG))])
+			fmt.Printf("[INFO] Đã lấy được fb_dtsg mới (len=%d, mẫu: %s)\n", len(data.DTSG), pattern[:min(20, len(pattern))])
 			break
 		}
 	}

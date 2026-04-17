@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -14,6 +16,7 @@ import (
 	"github.com/yourname/tool-facebook/internal/actiontest"
 	"github.com/yourname/tool-facebook/internal/fbdata"
 )
+
 
 type CrawlHandler struct {
 	accStore *accounts.JSONStore
@@ -736,5 +739,405 @@ func (h *CrawlHandler) fetchHTML(targetURL, cookie, ua string) (int, string, str
 	body, _ := io.ReadAll(resp.Body)
 	return resp.StatusCode, string(body), resp.Request.URL.String(), nil
 }
+
+// ── Quét bạn bè ──────────────────────────────────────────────────────────────
+
+// FriendEntity là thông tin một người bạn
+type FriendEntity struct {
+	UID    string `json:"uid"`
+	Name   string `json:"name"`
+	Avatar string `json:"avatar"`
+}
+
+// FriendCrawlResponse là kết quả quét bạn bè
+type FriendCrawlResponse struct {
+	Success    bool           `json:"success"`
+	Message    string         `json:"message"`
+	TotalCount int            `json:"total_count"`
+	Friends    []FriendEntity `json:"friends"`
+}
+
+
+// FetchFriends quét danh sách bạn bè. Ưu tiên GraphQL nếu có Doc ID, ngược lại dùng mbasic sau đó tự động thử các Doc ID phổ biến.
+func (h *CrawlHandler) FetchFriends(accountID string, targetID string, docID string) FriendCrawlResponse {
+	if accountID == "" {
+		return FriendCrawlResponse{Success: false, Message: "Cần chọn tài khoản."}
+	}
+
+	profile, err := h.accStore.Get(accountID)
+	if err != nil || profile == nil {
+		return FriendCrawlResponse{Success: false, Message: "Tài khoản không tồn tại."}
+	}
+
+	cookie := actiontest.SanitizeCookie(profile.Cookie)
+	if cookie == "" {
+		fbInfo, _ := h.fbStore.Get(accountID)
+		if fbInfo != nil {
+			cookie = actiontest.SanitizeCookie(fbInfo.Info.Cookie)
+		}
+	}
+	if cookie == "" {
+		return FriendCrawlResponse{Success: false, Message: "Không tìm thấy Cookie."}
+	}
+
+	// Xác định viewerID (người thực hiện)
+	viewerID := actiontest.ActorIDFromCookie(cookie)
+
+	// Xác định target: Nếu trống thì là chính mình
+	finalTarget := targetID
+	isSelf := false
+	if finalTarget == "" || finalTarget == viewerID || finalTarget == profile.AccountID {
+		finalTarget = viewerID
+		if finalTarget == "" { finalTarget = profile.AccountID }
+		isSelf = true
+	}
+
+	// Resolve target (nếu là username/vanity URL)
+	resolved := h.resolveProfileID(finalTarget, cookie)
+	if resolved != "" {
+		finalTarget = resolved
+	}
+
+	fmt.Printf("[FRIENDS] Bắt đầu quét cho Target: %s (qua tài khoản: %s)\n", finalTarget, profile.AccountID)
+
+	// ── TRƯỜNG HỢP 1: CÓ DOC ID THỦ CÔNG ──────────────────────────────────────
+	if docID != "" {
+		return h.fetchFriendsGraphQL(finalTarget, cookie, docID)
+	}
+
+	// ── TRƯỜNG HỢP 2: THỬ MBASIC TRƯỚC ──
+	mbasicFriends, totalCount := h.fetchFriendsMbasic(finalTarget, cookie)
+	if len(mbasicFriends) > 0 {
+		return FriendCrawlResponse{
+			Success: true, TotalCount: totalCount, Friends: mbasicFriends,
+			Message: fmt.Sprintf("✅ Quét thành công %d bạn bè qua mbasic.", len(mbasicFriends)),
+		}
+	}
+
+	// ── TRƯỜNG HỢP 3: MBASIC THẤT BẠI -> TỰ ĐỘNG THỬ DANH SÁCH DOC ID PHỔ BIẾN ──
+	fmt.Println("[FRIENDS] mbasic thất bại, bắt đầu thử các Doc ID phổ biến...")
+	fallbacks := []string{
+		"7114815461879024", // ProfileCometFriendsListQuery (Stable)
+		"25686001222718131",
+		"10156054341515257",
+		"8856555194367018",
+		"7086851601336040",
+		"6793541504033754",
+	}
+
+	// Ưu tiên nạp ID phù hợp nhất lên đầu danh sách thử nghiệm
+	if isSelf {
+		// Nếu là chính mình, ưu tiên ID đã biết là hoạt động tốt cho self
+		fallbacks = append([]string{"26206414195674994"}, fallbacks...)
+	} else {
+		// Nếu là người khác, ưu tiên ID Non-Self bạn vừa tìm được
+		fallbacks = append([]string{"26565284836436780"}, fallbacks...)
+	}
+
+	for _, id := range fallbacks {
+		fmt.Printf("[FRIENDS] Thử Fallback Doc ID: %s cho Target: %s\n", id, finalTarget)
+		resp := h.fetchFriendsGraphQL(finalTarget, cookie, id)
+		
+		// Chỉ chấp nhận nếu tìm thấy ít nhất 1 bạn bè THẬT (không phải rác hệ thống)
+		if resp.Success && len(resp.Friends) > 0 {
+			resp.Message = fmt.Sprintf("✅ Quét thành công %d bạn bè (Tự động dùng ID: %s).", len(resp.Friends), id)
+			return resp
+		}
+		fmt.Printf("[FRIENDS] Doc ID %s không trả về kết quả hợp lệ.\n", id)
+	}
+
+	return FriendCrawlResponse{
+		Success: false,
+		Message: "Không thể lấy danh sách bạn bè. Hãy thử F5 lại trang FB trên trình duyệt, bấm tab 'Tất cả bạn bè' rồi lấy Doc ID dán vào đây.",
+	}
+}
+
+// fetchFriendsGraphQL thực hiện quét qua API GraphQL
+func (h *CrawlHandler) fetchFriendsGraphQL(targetID, cookie, docID string) FriendCrawlResponse {
+	sd, err := actiontest.FetchSessionData(cookie)
+	if err != nil {
+		return FriendCrawlResponse{Success: false, Message: "Lỗi session: " + err.Error()}
+	}
+
+	if sd.DTSG == "" {
+		return FriendCrawlResponse{Success: false, Message: "Lỗi: Không lấy được token bảo mật (fb_dtsg). Có thể Cookie đã hết hạn hoặc bị Facebook chặn."}
+	}
+
+	var allFriends []FriendEntity
+	seenUIDs := make(map[string]bool)
+	cursor := ""
+	totalCount := 0
+
+	for page := 1; page <= 50; page++ {
+		vars := map[string]interface{}{}
+
+		// Nếu là mã "Non-Self" mới (2026), dùng bộ tham số đầy đủ
+		if docID == "26565284836436780" {
+			vars = map[string]interface{}{
+				"id":      targetID,
+				"count":   20,
+				"cursor":  cursor,
+				"scale":   1,
+				"search":  nil,
+				"__relay_internal__pv__FBProfile_enable_perf_improv_gkrelayprovider": true,
+			}
+		} else {
+			// Với các mã cũ hoặc mã quét "Self", dùng bộ tham số tối giản và ổn định
+			vars = map[string]interface{}{
+				"id":     targetID,
+				"count":  50,
+				"scale":  1,
+			}
+			if cursor != "" {
+				vars["cursor"] = cursor
+			} else {
+				vars["cursor"] = nil
+			}
+		}
+
+		variablesJSON, _ := json.Marshal(vars)
+		actorID := actiontest.ActorIDFromCookie(cookie)
+
+		fd := url.Values{}
+		fd.Set("av", actorID)
+		fd.Set("__user", actorID)
+		fd.Set("__a", "1")
+		fd.Set("fb_dtsg", sd.DTSG)
+		fd.Set("fb_api_caller_class", "RelayModern")
+		fd.Set("fb_api_req_friendly_name", "ProfileCometAppCollectionNonSelfFriendsListRendererPaginationQuery")
+		fd.Set("variables", string(variablesJSON))
+		fd.Set("doc_id", docID)
+		if sd.LSD != "" {
+			fd.Set("lsd", sd.LSD)
+		}
+
+		req, _ := http.NewRequest("POST", "https://www.facebook.com/api/graphql/", strings.NewReader(fd.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Header.Set("Cookie", cookie)
+		req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+		
+		if sd.LSD != "" {
+			req.Header.Set("X-FB-LSD", sd.LSD)
+		}
+		req.Header.Set("X-ASBD-ID", "129477")
+		req.Header.Set("X-FB-Friendly-Name", "ProfileCometAppCollectionNonSelfFriendsListRendererPaginationQuery")
+		req.Header.Set("Sec-Fetch-Dest", "empty")
+		req.Header.Set("Sec-Fetch-Mode", "cors")
+		req.Header.Set("Sec-Fetch-Site", "same-origin")
+
+		client := &http.Client{Timeout: 30 * time.Second}
+		resp, err := client.Do(req)
+		if err != nil { break }
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+
+		bodyStr := string(body)
+		if strings.Contains(bodyStr, "\"errors\"") && !strings.Contains(bodyStr, "edges") {
+			fmt.Printf("[FRIENDS-GQL] Facebook báo lỗi: %s\n", bodyStr)
+			break
+		}
+
+		friends, nextCursor, count := h.parseFriendsGraphQLInternal(bodyStr, seenUIDs)
+		if count > 0 && totalCount == 0 { totalCount = count }
+		
+		if len(friends) == 0 { break }
+
+		allFriends = append(allFriends, friends...)
+
+		fmt.Printf("[FRIENDS-GQL] Trang %d: +%d bạn, tổng=%d\n", page, len(friends), len(allFriends))
+		if nextCursor == "" || nextCursor == cursor { break }
+		cursor = nextCursor
+		time.Sleep(300 * time.Millisecond)
+	}
+
+	if len(allFriends) == 0 {
+		return FriendCrawlResponse{Success: false}
+	}
+
+	return FriendCrawlResponse{
+		Success: true, TotalCount: totalCount, Friends: allFriends,
+	}
+}
+
+// fetchFriendsMbasic thu thập danh sách bạn bè qua mbasic.facebook.com
+func (h *CrawlHandler) fetchFriendsMbasic(uid, cookie string) ([]FriendEntity, int) {
+	// Dùng User-Agent Chrome chuẩn để tránh bị chặn mbasic
+	ua := "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+	seen := make(map[string]bool)
+	var allFriends []FriendEntity
+	totalCount := 0
+	startIndex := 0
+
+	for page := 1; page <= 100; page++ {
+		var targetURL string
+		if startIndex == 0 {
+			targetURL = fmt.Sprintf("https://mbasic.facebook.com/profile.php?id=%s&v=friends", uid)
+		} else {
+			targetURL = fmt.Sprintf("https://mbasic.facebook.com/profile.php?id=%s&v=friends&startindex=%d", uid, startIndex)
+		}
+
+		req, _ := http.NewRequest("GET", targetURL, nil)
+		req.Header.Set("Cookie", actiontest.SanitizeCookie(cookie))
+		req.Header.Set("User-Agent", ua)
+		req.Header.Set("Accept-Language", "vi-VN,vi;q=0.9,en-US;q=0.8")
+
+		client := &http.Client{Timeout: 20 * time.Second}
+		resp, err := client.Do(req)
+		if err != nil { break }
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		body := string(bodyBytes)
+
+		if strings.Contains(body, "You must log in first") || strings.Contains(body, "login.php") {
+			fmt.Println("[FRIENDS-MBASIC] Bị yêu cầu đăng nhập.")
+			break
+		}
+
+		friends, nextIndex, count := h.parseFriendsMbasicHTML(body, seen)
+		if count > 0 && totalCount == 0 { totalCount = count }
+		
+		if len(friends) == 0 { break }
+
+		allFriends = append(allFriends, friends...)
+		for _, f := range friends { seen[f.UID] = true }
+
+		fmt.Printf("[FRIENDS-MBASIC] Trang %d: +%d bạn, tổng=%d\n", page, len(friends), len(allFriends))
+		if nextIndex <= 0 || nextIndex == startIndex { break }
+		startIndex = nextIndex
+		time.Sleep(500 * time.Millisecond)
+	}
+
+	return allFriends, totalCount
+}
+
+func (h *CrawlHandler) parseFriendsGraphQLInternal(bodyStr string, seenUIDs map[string]bool) ([]FriendEntity, string, int) {
+	var friends []FriendEntity
+	nextCursor := ""
+	totalCount := 0
+
+	for _, line := range strings.Split(bodyStr, "\n") {
+		line = strings.TrimPrefix(strings.TrimSpace(line), "for (;;);")
+		if line == "" { continue }
+		var chunk map[string]interface{}
+		if err := json.Unmarshal([]byte(line), &chunk); err != nil { continue }
+		
+		var findEdges func(obj interface{})
+		findEdges = func(obj interface{}) {
+			m, ok := obj.(map[string]interface{})
+			if !ok { return }
+			
+			// Hỗ trợ cả friends.edges và s_friends.edges
+			for _, key := range []string{"edges", "friends", "all_friends", "node"} {
+				if v, ok := m[key]; ok {
+					if key == "edges" {
+						if edges, ok := v.([]interface{}); ok {
+							if tc, ok := m["total_count"].(float64); ok { totalCount = int(tc) }
+							if pi, ok := m["page_info"].(map[string]interface{}); ok {
+								if hasNext, _ := pi["has_next_page"].(bool); hasNext {
+									if c, _ := pi["end_cursor"].(string); c != "" { nextCursor = c }
+								}
+							}
+							for _, e := range edges {
+								edge, ok := e.(map[string]interface{})
+								if !ok { continue }
+								node, ok := edge["node"].(map[string]interface{})
+								if !ok { continue }
+								uid, _ := node["id"].(string)
+								name, _ := node["name"].(string)
+
+								// BỘ LỌC THÔNG MINH:
+								// 1. UID phải là dãy số và dài từ 6 ký tự trở lên.
+								// 2. Không phải là các link hệ thống như profile.php, v.v.
+								isNumericID := true
+								if len(uid) < 6 { isNumericID = false }
+								for _, ch := range uid {
+									if ch < '0' || ch > '9' { isNumericID = false; break }
+								}
+
+								if !isNumericID || name == "" || seenUIDs[uid] { continue }
+								
+								// Loại bỏ các cụm từ rác
+								lowerName := strings.ToLower(name)
+								if strings.Contains(lowerName, "chỉnh sửa") || strings.Contains(lowerName, "edit profile") {
+									continue
+								}
+
+								avatar := ""
+								if pp, ok := node["profile_picture"].(map[string]interface{}); ok {
+									avatar, _ = pp["uri"].(string)
+								} else if pp, ok := node["profile_photo"].(map[string]interface{}); ok {
+									// Thử thêm profile_photo cho một số cấu trúc khác
+									avatar, _ = pp["uri"].(string)
+								}
+
+								friends = append(friends, FriendEntity{UID: uid, Name: name, Avatar: avatar})
+								seenUIDs[uid] = true
+							}
+						}
+					} else {
+						findEdges(v)
+					}
+				}
+			}
+			for k, v := range m {
+				if k != "edges" && k != "friends" { findEdges(v) }
+			}
+		}
+		findEdges(chunk)
+	}
+	return friends, nextCursor, totalCount
+}
+
+func (h *CrawlHandler) parseFriendsMbasicHTML(body string, seen map[string]bool) ([]FriendEntity, int, int) {
+	var friends []FriendEntity
+	nextIndex := -1
+	totalCount := 0
+
+	reCount := regexp.MustCompile(`(\d[\d,\.]*)\s+(?:bạn bè|friends)`)
+	if m := reCount.FindStringSubmatch(body); m != nil {
+		numStr := strings.ReplaceAll(strings.ReplaceAll(m[1], ",", ""), ".", "")
+		totalCount, _ = strconv.Atoi(numStr)
+	}
+
+	// Cải tiến regex để bắt được nhiều định dạng link mbasic hơn
+	reFriend := regexp.MustCompile(`(?i)<img\s[^>]*src="([^"]+)"[^>]*>.*?<a\s+href="/([^"?&]+)(?:\?[^"]*)?"[^>]*>([^<]+)</a>`)
+	matches := reFriend.FindAllStringSubmatch(body, -1)
+	
+	for _, m := range matches {
+		img, href, name := m[1], m[2], strings.TrimSpace(m[3])
+		uid := href
+		if strings.Contains(href, "profile.php?id=") {
+			uid = strings.Split(strings.Split(href, "id=")[1], "&")[0]
+		}
+
+		// BỘ LỌC THÔNG MINH CHO MBASIC:
+		isNumericID := true
+		if len(uid) < 6 { isNumericID = false }
+		for _, ch := range uid {
+			if ch < '0' || ch > '9' { isNumericID = false; break }
+		}
+
+		lowerName := strings.ToLower(name)
+		if !isNumericID || name == "" || seen[uid] || 
+		   strings.Contains(lowerName, "chỉnh sửa") || 
+		   strings.Contains(lowerName, "edit profile") ||
+		   strings.Contains(lowerName, "xem thêm") || 
+		   strings.Contains(lowerName, "facebook") { 
+			continue 
+		}
+
+		friends = append(friends, FriendEntity{UID: uid, Name: name, Avatar: img})
+		seen[uid] = true
+	}
+
+	reNext := regexp.MustCompile(`(?i)startindex=(\d+)`)
+	if m := reNext.FindStringSubmatch(body); m != nil {
+		nextIndex, _ = strconv.Atoi(m[1])
+	}
+
+	return friends, nextIndex, totalCount
+}
+
+
 
 

@@ -14,6 +14,10 @@ export function ExtractTextFromComet(arg1) {
   return window['go']['crawl']['CrawlHandler']['ExtractTextFromComet'](arg1);
 }
 
+export function FetchFriends(arg1, arg2, arg3) {
+  return window['go']['crawl']['CrawlHandler']['FetchFriends'](arg1, arg2, arg3);
+}
+
 export function RunCrawl(arg1) {
   return window['go']['crawl']['CrawlHandler']['RunCrawl'](arg1);
 }

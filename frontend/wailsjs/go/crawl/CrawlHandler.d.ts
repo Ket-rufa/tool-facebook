@@ -8,4 +8,6 @@ export function ExtractPostsFromHTML(arg1:string):Promise<Array<crawl.CrawlPostE
 
 export function ExtractTextFromComet(arg1:Record<string, any>):Promise<string>;
 
+export function FetchFriends(arg1:string,arg2:string,arg3:string):Promise<crawl.FriendCrawlResponse>;
+
 export function RunCrawl(arg1:crawl.CrawlRequest):Promise<crawl.CrawlResponse>;

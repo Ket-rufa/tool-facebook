@@ -1,6 +1,7 @@
 package crawl
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -15,6 +16,25 @@ import (
 
 // resolveProfileID chuyển username/vanity URL sang numeric profile ID
 func (h *CrawlHandler) resolveProfileID(target, cookie string) string {
+	target = strings.TrimSpace(target)
+	if target == "" { return "" }
+
+	// Tự động bóc tách nếu là link đầy đủ
+	if strings.Contains(target, "facebook.com") {
+		if u, err := url.Parse(target); err == nil {
+			if id := u.Query().Get("id"); id != "" {
+				target = id
+			} else {
+				path := strings.Trim(u.Path, "/")
+				parts := strings.Split(path, "/")
+				if len(parts) > 0 {
+					// Lấy phần cuối cùng (thường là username)
+					target = parts[len(parts)-1]
+				}
+			}
+		}
+	}
+
 	isNum := true
 	for _, ch := range target {
 		if ch < '0' || ch > '9' { isNum = false; break }
@@ -189,5 +209,17 @@ func (h *CrawlHandler) resolveViaHTMLScrape(vanity, cookie string) string {
 			}
 		}
 	}
+
+	// TÌM KIẾM BỘ SƯU TẬP (PFBID) - Đặc thù cho năm 2026
+	// Tìm chuỗi app_collection:pfbid...
+	reColl := regexp.MustCompile(`["'](app_collection:(?:pfbid|user_id)[^"']+)["']`)
+	if m := reColl.FindStringSubmatch(body); len(m) > 1 {
+		collID := m[1]
+		fmt.Printf("[RESOLVE][html] Found Collection ID: %s\n", collID)
+		// Base64 encode để dùng trong GraphQL (giống Payload bạn gửi)
+		b64ID := base64.StdEncoding.EncodeToString([]byte(collID))
+		return b64ID
+	}
+
 	return ""
 }
