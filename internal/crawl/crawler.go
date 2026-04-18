@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -849,59 +850,6 @@ func (h *CrawlHandler) ScanProfileInfo(uid, cookie string) (*ProfileInfo, error)
 	actorID := actiontest.ActorIDFromCookie(cookie)
 	info := &ProfileInfo{UID: uid}
 	return h.scanProfileInfoV2(uid, sd, actorID, cookie, info)
-
-	// BƯỚC 1: Thử ProfileCometAboutAppSectionQuery (Chi tiết) - Cập nhật theo doc_id mới nhất
-	docID := "24801675826197206"
-	vars := map[string]interface{}{
-		"appSectionFeedKey": fmt.Sprintf("ProfileCometAppSectionFeed_timeline_nav_app_sections__%s", uid),
-		"collectionToken":   nil,
-		"pageID":            uid,
-		"rawSectionToken":   nil,
-		"scale":             1,
-		"sectionToken":      nil,
-		"showReactions":     true,
-		"userID":            uid,
-		"__relay_internal__pv__FBProfile_enable_perf_improv_gkrelayprovider":                                               true,
-		"__relay_internal__pv__CometUFIReactionsEnableShortNamerelayprovider":                                              false,
-		"__relay_internal__pv__FBReels_deprecate_short_form_video_context_gkrelayprovider":                                 true,
-		"__relay_internal__pv__FBReelsMediaFooter_comet_enable_reels_ads_gkrelayprovider":                                  true,
-		"__relay_internal__pv__FBUnifiedVideoMediaContentContainer_comet_reels_video_footer_defer_loading_gkrelayprovider": false,
-		"__relay_internal__pv__ShouldEnableBakedInTextUnifiedVideorelayprovider":                                           false,
-		"__relay_internal__pv__FBUnifiedVideoMediaFooter_comet_enable_reels_ads_gkrelayprovider":                           true,
-		"__relay_internal__pv__FBUnifiedVideoMediaFooter_enable_meta_ai_pill_gkrelayprovider":                              true,
-		"__relay_internal__pv__FBUnifiedVideoMediaFooter_enable_group_character_ai_info_pill_gkrelayprovider":              true,
-		"__relay_internal__pv__FBUnifiedVideoMediaFooter_enable_video_augment_pills_gkrelayprovider":                       false,
-		"__relay_internal__pv__FBUnifiedVideoFeedbackBar_comet_reels_save_button_gkrelayprovider":                          false,
-		"__relay_internal__pv__usePushPipEngagementCounts_comet_video_document_picture_in_picture_gkrelayprovider":         false,
-		"__relay_internal__pv__FBReels_enable_view_dubbed_audio_type_gkrelayprovider":                                      true,
-		"__relay_internal__pv__FBUnifiedVideoMenu_fb_reels_ranking_debug_tool_gkrelayprovider":                             false,
-	}
-
-	body, err := h.executeGraphQL(docID, "ProfileCometAboutAppSectionQuery", vars, sd, actorID, cookie)
-	if err == nil && !strings.Contains(string(body), `"error":1357054`) {
-		h.parseProfileLines(body, info)
-	}
-
-	// BƯỚC 2: Nếu chưa có tên (do truy vấn trên lỗi), thử ProfileCometHeaderQuery (Cơ bản nhưng ổn định)
-	if info.Name == "" {
-		fmt.Printf("[SCAN] About query failed or empty, falling back to Header query for UID: %s\n", uid)
-		headerDocID := "5380494448574168" // ProfileCometHeaderQuery
-		headerVars := map[string]interface{}{
-			"id":    uid,
-			"scale": 1,
-		}
-		headerBody, err := h.executeGraphQL(headerDocID, "ProfileCometHeaderQuery", headerVars, sd, actorID, cookie)
-		if err == nil {
-			h.parseProfileLines(headerBody, info)
-		}
-	}
-
-	if info.Name != "" {
-		h.SaveProfileToText(info)
-		return info, nil
-	}
-
-	return nil, fmt.Errorf("không thể lấy thông tin profile qua GraphQL")
 }
 
 func (h *CrawlHandler) scanProfileInfoV2(uid string, sd actiontest.SessionData, actorID, cookie string, info *ProfileInfo) (*ProfileInfo, error) {
@@ -914,10 +862,29 @@ func (h *CrawlHandler) scanProfileInfoV2(uid string, sd actiontest.SessionData, 
 		h.parseProfileLines(probeBody, info)
 	}
 
+	// Bước 1.5: Thử ProfileCometHeaderQuery (MỚI) để lấy thông tin Intro (Nơi sống, Quê quán, MQH)
+	headerDocID := "26761890020094587"
+	headerVars := map[string]interface{}{
+		"id":     uid,
+		"userID":          uid,
+		"scale":           1,
+		"renderLocation":  "timeline",
+		"useDefaultActor": false,
+	}
+	h.addRelayVars(headerVars)
+	headerBody, err := h.executeGraphQL(headerDocID, "ProfileCometHeaderQuery", headerVars, sd, actorID, cookie)
+	if err == nil {
+		h.parseProfileLines(headerBody, info)
+	}
+
 	// Bước 2: khi đã có token thật, gọi lại About query với appSectionFeedKey/rawSectionToken đúng.
 	if tokens.SectionToken != "" || tokens.RawSectionToken != "" {
 		fullBody, err := h.executeGraphQL(docID, "ProfileCometAboutAppSectionQuery", h.buildProfileAboutVars(uid, tokens), sd, actorID, cookie)
 		if err == nil && !strings.Contains(string(fullBody), `"error":1357054`) {
+			// [DEBUG] Lưu data raw ra file theo UID như yêu cầu chuyên gia
+			debugFile := fmt.Sprintf("debug_about_%s.json", uid)
+			_ = os.WriteFile(debugFile, fullBody, 0644)
+
 			h.parseProfileLines(fullBody, info)
 			if refreshed := h.extractAboutTokens(fullBody); refreshed.SectionToken != "" || refreshed.RawSectionToken != "" {
 				tokens = refreshed
@@ -925,10 +892,52 @@ func (h *CrawlHandler) scanProfileInfoV2(uid string, sd actiontest.SessionData, 
 		}
 	}
 
+	// Bước 2.1: Thử TopAppSectionQuery nếu có SectionToken
+	if tokens.SectionToken != "" {
+		topVars := map[string]interface{}{
+			"collectionToken": nil,
+			"scale":           1,
+			"sectionToken":    tokens.SectionToken,
+			"useDefaultActor": false,
+			"userID":          uid,
+		}
+		h.addRelayVars(topVars)
+		topBody, err := h.executeGraphQL("26381693108149591", "ProfileCometTopAppSectionQuery", topVars, sd, actorID, cookie)
+		if err == nil {
+			h.parseProfileLines(topBody, info)
+			tokens = mergeAboutTokens(tokens, h.extractAboutTokens(topBody))
+		}
+	}
+
+	// Bước 2.2: Thủ AppSectionFeedPaginationQuery để lấy danh sách chi tiết (Work, Edu, City...)
+	if tokens.AppSectionFeedKey != "" {
+		pageVars := map[string]interface{}{
+			"appSectionFeedKey": tokens.AppSectionFeedKey,
+			"count":             5,
+			"cursor":            nil,
+			"pageID":            uid,
+			"renderLocation":    nil,
+			"scale":             1,
+			"showReactions":     true,
+			"useDefaultActor":   true,
+			"id":                uid,
+		}
+		h.addRelayVars(pageVars)
+		pageBody, err := h.executeGraphQL("26509251748683727", "ProfileCometAppSectionFeedPaginationQuery", pageVars, sd, actorID, cookie)
+		if err == nil {
+			h.parseProfileLines(pageBody, info)
+		}
+	}
+
 	// Bước 3: Header query hiện tại đã stale; dùng Timeline query ổn định để bổ sung name/avatar/gender.
 	if info.Name == "" || info.ProfilePicture == "" || info.Gender == "" {
 		fmt.Printf("[SCAN] About query incomplete, hydrating identity from Timeline query for UID: %s\n", uid)
 		h.hydrateProfileFromTimeline(uid, sd, actorID, cookie, info)
+	}
+
+	if h.needsHTMLProfileFallback(info) {
+		fmt.Printf("[SCAN] GraphQL still incomplete, hydrating remaining fields from HTML for UID: %s\n", uid)
+		h.hydrateProfileFromHTML(uid, cookie, info)
 	}
 
 	if info.Name == "" && h.hasMeaningfulProfileInfo(info) {
@@ -1012,7 +1021,6 @@ func (h *CrawlHandler) parseProfileData(data map[string]interface{}, info *Profi
 		}
 		h.walkProfileValue(root, info, 0)
 	}
-	return
 
 	node := h.getMap(data["data"])
 	if node == nil {
@@ -1131,7 +1139,7 @@ func (h *CrawlHandler) buildProfileAboutVars(uid string, tokens profileAboutToke
 
 	if tokens.RawSectionToken != "" {
 		rawSectionToken = tokens.RawSectionToken
-		appSectionFeedKey = fmt.Sprintf("ProfileCometAppSectionFeed_timeline_nav_app_sections__%s", tokens.RawSectionToken)
+		appSectionFeedKey = fmt.Sprintf("ProfileCometAppSectionFeed_timeline_nav_app_sections_%s", tokens.RawSectionToken)
 	}
 	if tokens.AppSectionFeedKey != "" {
 		appSectionFeedKey = tokens.AppSectionFeedKey
@@ -1143,7 +1151,7 @@ func (h *CrawlHandler) buildProfileAboutVars(uid string, tokens profileAboutToke
 		collectionToken = tokens.CollectionToken
 	}
 
-	return map[string]interface{}{
+	vars := map[string]interface{}{
 		"appSectionFeedKey": appSectionFeedKey,
 		"collectionToken":   collectionToken,
 		"pageID":            uid,
@@ -1152,21 +1160,26 @@ func (h *CrawlHandler) buildProfileAboutVars(uid string, tokens profileAboutToke
 		"sectionToken":      sectionToken,
 		"showReactions":     true,
 		"userID":            uid,
-		"__relay_internal__pv__FBProfile_enable_perf_improv_gkrelayprovider":                                               true,
-		"__relay_internal__pv__CometUFIReactionsEnableShortNamerelayprovider":                                              false,
-		"__relay_internal__pv__FBReels_deprecate_short_form_video_context_gkrelayprovider":                                 true,
-		"__relay_internal__pv__FBReelsMediaFooter_comet_enable_reels_ads_gkrelayprovider":                                  true,
-		"__relay_internal__pv__FBUnifiedVideoMediaContentContainer_comet_reels_video_footer_defer_loading_gkrelayprovider": false,
-		"__relay_internal__pv__ShouldEnableBakedInTextUnifiedVideorelayprovider":                                           false,
-		"__relay_internal__pv__FBUnifiedVideoMediaFooter_comet_enable_reels_ads_gkrelayprovider":                           true,
-		"__relay_internal__pv__FBUnifiedVideoMediaFooter_enable_meta_ai_pill_gkrelayprovider":                              true,
-		"__relay_internal__pv__FBUnifiedVideoMediaFooter_enable_group_character_ai_info_pill_gkrelayprovider":              true,
-		"__relay_internal__pv__FBUnifiedVideoMediaFooter_enable_video_augment_pills_gkrelayprovider":                       false,
-		"__relay_internal__pv__FBUnifiedVideoFeedbackBar_comet_reels_save_button_gkrelayprovider":                          false,
-		"__relay_internal__pv__usePushPipEngagementCounts_comet_video_document_picture_in_picture_gkrelayprovider":         false,
-		"__relay_internal__pv__FBReels_enable_view_dubbed_audio_type_gkrelayprovider":                                      true,
-		"__relay_internal__pv__FBUnifiedVideoMenu_fb_reels_ranking_debug_tool_gkrelayprovider":                             false,
 	}
+	h.addRelayVars(vars)
+	return vars
+}
+
+func (h *CrawlHandler) addRelayVars(vars map[string]interface{}) {
+	vars["__relay_internal__pv__FBProfile_enable_perf_improv_gkrelayprovider"] = true
+	vars["__relay_internal__pv__CometUFIReactionsEnableShortNamerelayprovider"] = false
+	vars["__relay_internal__pv__FBReels_deprecate_short_form_video_context_gkrelayprovider"] = true
+	vars["__relay_internal__pv__FBReelsMediaFooter_comet_enable_reels_ads_gkrelayprovider"] = true
+	vars["__relay_internal__pv__FBUnifiedVideoMediaContentContainer_comet_reels_video_footer_defer_loading_gkrelayprovider"] = false
+	vars["__relay_internal__pv__ShouldEnableBakedInTextUnifiedVideorelayprovider"] = false
+	vars["__relay_internal__pv__FBUnifiedVideoMediaFooter_comet_enable_reels_ads_gkrelayprovider"] = true
+	vars["__relay_internal__pv__FBUnifiedVideoMediaFooter_enable_meta_ai_pill_gkrelayprovider"] = true
+	vars["__relay_internal__pv__FBUnifiedVideoMediaFooter_enable_group_character_ai_info_pill_gkrelayprovider"] = true
+	vars["__relay_internal__pv__FBUnifiedVideoMediaFooter_enable_video_augment_pills_gkrelayprovider"] = false
+	vars["__relay_internal__pv__FBUnifiedVideoFeedbackBar_comet_reels_save_button_gkrelayprovider"] = false
+	vars["__relay_internal__pv__usePushPipEngagementCounts_comet_video_document_picture_in_picture_gkrelayprovider"] = false
+	vars["__relay_internal__pv__FBReels_enable_view_dubbed_audio_type_gkrelayprovider"] = true
+	vars["__relay_internal__pv__FBUnifiedVideoMenu_fb_reels_ranking_debug_tool_gkrelayprovider"] = false
 }
 
 func (h *CrawlHandler) extractAboutTokens(body []byte) profileAboutTokens {
@@ -1195,7 +1208,7 @@ func (h *CrawlHandler) extractAboutTokens(body []byte) profileAboutTokens {
 	}
 
 	if tokens.RawSectionToken != "" && tokens.AppSectionFeedKey == "" {
-		tokens.AppSectionFeedKey = fmt.Sprintf("ProfileCometAppSectionFeed_timeline_nav_app_sections__%s", tokens.RawSectionToken)
+		tokens.AppSectionFeedKey = fmt.Sprintf("ProfileCometAppSectionFeed_timeline_nav_app_sections_%s", tokens.RawSectionToken)
 	}
 
 	return tokens
@@ -1205,6 +1218,9 @@ func (h *CrawlHandler) extractAboutTokensFromRoot(root map[string]interface{}, t
 	if user := h.getMap(root["user"]); user != nil {
 		if sections := h.getMap(user["about_app_sections"]); sections != nil {
 			h.extractAboutTokensFromSectionContainer(sections, tokens, false)
+		}
+		if sections := h.getMap(user["timeline_nav_app_sections"]); sections != nil {
+			h.extractAboutTokensFromSectionContainer(sections, tokens, true)
 		}
 	}
 	if sections := h.getMap(root["about_app_sections"]); sections != nil {
@@ -1268,6 +1284,16 @@ func (h *CrawlHandler) extractAboutTokensFromSectionContainer(container map[stri
 				}
 			}
 			break
+		}
+		if tokens.RawSectionToken == "" {
+			if pageInfo := h.getMap(container["page_info"]); pageInfo != nil {
+				if cursor, _ := pageInfo["end_cursor"].(string); cursor != "" {
+					tokens.RawSectionToken = cursor
+				}
+			}
+		}
+		if tokens.RawSectionToken != "" && tokens.AppSectionFeedKey == "" {
+			tokens.AppSectionFeedKey = fmt.Sprintf("ProfileCometAppSectionFeed_timeline_nav_app_sections_%s", tokens.RawSectionToken)
 		}
 	}
 }
@@ -1432,6 +1458,9 @@ func (h *CrawlHandler) applyProfileEntity(node map[string]interface{}, info *Pro
 		if rel := h.findText(h.getMap(node["relationship_status"])); rel != "" {
 			info.Relationship = rel
 			fmt.Printf("[SCAN] >> Đã tìm thấy MQH: %s\n", rel)
+		} else if rel := h.findText(h.getMap(node["family_and_relationship_status"])); rel != "" {
+			info.Relationship = rel
+			fmt.Printf("[SCAN] >> Đã tìm thấy MQH (family): %s\n", rel)
 		}
 	}
 
@@ -1523,35 +1552,45 @@ func (h *CrawlHandler) applyCollectionItem(collectionTitle string, item map[stri
 		return
 	}
 
+	// Xử lý trường hợp chuỗi "Bạn đang nghĩ gì?" hoặc các biến thể bio placeholder
+	valNorm := normalizeLabel(value)
+	if valNorm == "bạn đang nghĩ gì?" || valNorm == "what's on your mind?" {
+		if info.Bio == "" {
+			info.Bio = value
+			fmt.Printf("[SCAN] >> Đã chuyển bio placeholder sang Tiểu sử: %s\n", value)
+		}
+		return
+	}
+
 	switch normalizedCollection {
-	case "work", "công việc":
+	case "work", "công việc", "làm việc tại":
 		info.Work = appendUnique(info.Work, value)
 		fmt.Printf("[SCAN] >> Đã tìm thấy Công việc: %s\n", value)
-	case "education", "học vấn":
+	case "education", "học vấn", "giáo dục", "học tại", "từng học tại":
 		info.Education = appendUnique(info.Education, value)
-		fmt.Printf("[SCAN] >> Đã tìm thấy Học vấn: %s\n", value)
-	case "current city", "thành phố hiện tại":
+		fmt.Printf("[SCAN] >> Đã tìm thấy Học vấn/Giáo dục: %s\n", value)
+	case "current city", "thành phố hiện tại", "sống tại", "sống ở":
 		if info.CurrentCity == "" {
 			info.CurrentCity = value
 			fmt.Printf("[SCAN] >> Đã tìm thấy Thành phố hiện tại: %s\n", value)
 		}
-	case "hometown", "quê quán":
+	case "hometown", "quê quán", "đã từng sống tại", "từ", "đến từ":
 		if info.Hometown == "" {
 			info.Hometown = value
 			fmt.Printf("[SCAN] >> Đã tìm thấy Quê quán: %s\n", value)
 		}
-	case "relationship", "tình trạng mối quan hệ":
+	case "relationship", "tình trạng mối quan hệ", "mối quan hệ":
 		if info.Relationship == "" {
 			info.Relationship = value
 			fmt.Printf("[SCAN] >> Đã tìm thấy MQH: %s\n", value)
 		}
-	case "places lived", "nơi từng sống":
+	case "places lived", "nơi từng sống", "thành phố từng sống":
 		switch normalizeLabel(label) {
-		case "current city", "thành phố hiện tại":
+		case "current city", "thành phố hiện tại", "sống tại":
 			if info.CurrentCity == "" {
 				info.CurrentCity = value
 			}
-		case "hometown", "quê quán":
+		case "hometown", "quê quán", "đến từ":
 			if info.Hometown == "" {
 				info.Hometown = value
 			}
@@ -1562,9 +1601,13 @@ func (h *CrawlHandler) applyCollectionItem(collectionTitle string, item map[stri
 			if info.Birthday == "" {
 				info.Birthday = value
 			}
-		case "relationship", "tình trạng mối quan hệ":
+		case "relationship", "tình trạng mối quan hệ", "mối quan hệ":
 			if info.Relationship == "" {
 				info.Relationship = value
+			}
+		case "gender", "giới tính":
+			if info.Gender == "" {
+				info.Gender = value
 			}
 		}
 	}
@@ -1764,6 +1807,28 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
+func mergeAboutTokens(base, extra profileAboutTokens) profileAboutTokens {
+	if base.SectionToken == "" {
+		base.SectionToken = extra.SectionToken
+	}
+	if base.RawSectionToken == "" {
+		base.RawSectionToken = extra.RawSectionToken
+	}
+	if base.AppSectionFeedKey == "" {
+		base.AppSectionFeedKey = extra.AppSectionFeedKey
+	}
+	if base.CollectionToken == "" {
+		base.CollectionToken = extra.CollectionToken
+	}
+	if base.AboutURL == "" {
+		base.AboutURL = extra.AboutURL
+	}
+	if base.InfoAllURL == "" {
+		base.InfoAllURL = extra.InfoAllURL
+	}
+	return base
+}
+
 func appendUnique(list []string, value string) []string {
 	value = strings.TrimSpace(value)
 	if value == "" {
@@ -1778,35 +1843,57 @@ func appendUnique(list []string, value string) []string {
 }
 
 func (h *CrawlHandler) SaveProfileToText(info *ProfileInfo) {
-	dataDir := "DATA"
+	dataDir := filepath.Clean("data")
 	if _, err := os.Stat(dataDir); os.IsNotExist(err) {
 		_ = os.MkdirAll(dataDir, 0755)
 	}
 
-	filename := fmt.Sprintf("%s/%s.txt", dataDir, info.UID)
+	filename := filepath.Join(dataDir, fmt.Sprintf("%s.txt", info.UID))
 
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("UID: %s\n", info.UID))
-	sb.WriteString(fmt.Sprintf("Họ tên: %s\n", info.Name))
-	sb.WriteString(fmt.Sprintf("Giới tính: %s\n", info.Gender))
-	sb.WriteString(fmt.Sprintf("Ngày sinh: %s\n", info.Birthday))
-	sb.WriteString(fmt.Sprintf("Thành phố hiện tại: %s\n", info.CurrentCity))
-	sb.WriteString(fmt.Sprintf("Quê quán: %s\n", info.Hometown))
-	sb.WriteString(fmt.Sprintf("Tình trạng mối quan hệ: %s\n", info.Relationship))
+
+	// Helper function
+	writeOrDefault := func(label, value string) {
+		if strings.TrimSpace(value) == "" {
+			sb.WriteString(fmt.Sprintf("%s: Chưa có thông tin\n", label))
+		} else {
+			sb.WriteString(fmt.Sprintf("%s: %s\n", label, value))
+		}
+	}
+
+	writeOrDefault("Họ tên", info.Name)
+	writeOrDefault("Giới tính", info.Gender)
+	writeOrDefault("Ngày sinh", info.Birthday)
+	writeOrDefault("Thành phố hiện tại", info.CurrentCity)
+	writeOrDefault("Quê quán", info.Hometown)
+	writeOrDefault("Tình trạng mối quan hệ", info.Relationship)
 
 	sb.WriteString("\nCông việc:\n")
-	for _, w := range info.Work {
-		sb.WriteString(fmt.Sprintf("- %s\n", w))
+	if len(info.Work) == 0 {
+		sb.WriteString("Chưa có thông tin\n")
+	} else {
+		for _, w := range info.Work {
+			sb.WriteString(fmt.Sprintf("- %s\n", w))
+		}
 	}
 
 	sb.WriteString("\nGiáo dục:\n")
-	for _, e := range info.Education {
-		sb.WriteString(fmt.Sprintf("- %s\n", e))
+	if len(info.Education) == 0 {
+		sb.WriteString("Chưa có thông tin\n")
+	} else {
+		for _, e := range info.Education {
+			sb.WriteString(fmt.Sprintf("- %s\n", e))
+		}
 	}
 
-	sb.WriteString(fmt.Sprintf("\nNgười theo dõi: %s\n", info.Followers))
-	sb.WriteString(fmt.Sprintf("Tiểu sử: %s\n", info.Bio))
+	writeOrDefault("\nNgười theo dõi", info.Followers)
+	writeOrDefault("Tiểu sử", info.Bio)
 
 	_ = os.WriteFile(filename, []byte(sb.String()), 0644)
+	if absPath, err := filepath.Abs(filename); err == nil {
+		fmt.Printf("[SCAN] Saved profile data to %s\n", absPath)
+		return
+	}
 	fmt.Printf("[SCAN] Saved profile data to %s\n", filename)
 }

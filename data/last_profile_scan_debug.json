@@ -2,13 +2,19 @@
   "uid": "61572157625165",
   "name": "Victoria Thompson",
   "gender": "FEMALE",
-  "birthday": "",
-  "current_city": "",
-  "hometown": "",
-  "relationship": "",
-  "education": null,
-  "work": null,
-  "followers": "",
-  "bio": "",
-  "profile_picture": "https://scontent.fbmv1-1.fna.fbcdn.net/v/t39.30808-1/672675350_122100536498738587_7308536178448315003_n.jpg?stp=c448.0.1152.1152a_cp0_dst-jpg_s32x32_tt6\u0026_nc_cat=107\u0026ccb=1-7\u0026_nc_sid=e99d92\u0026_nc_ohc=3pnHJEMYyZwQ7kNvwGmUacp\u0026_nc_oc=AdqvExfHPceoV1vNsx7to8QnD1gkcVj2ewpFX8cqStBIbFgk9l6xoHWIhhwiozTAnRE\u0026_nc_zt=24\u0026_nc_ht=scontent.fbmv1-1.fna\u0026_nc_gid=ymp08T3N_9MJseG_X0tNpQ\u0026_nc_ss=7a3a8\u0026oh=00_Af3XLmCsVmsiCncVuTQ5h6HNCEC9cAwDkj6L_aYW00LSiw\u0026oe=69E794EF"
+  "birthday": "8 tháng 12, 1996",
+  "current_city": "Thành phố Hồ Chí Minh",
+  "hometown": "Đắk Lắk",
+  "relationship": "Độc thân",
+  "education": [
+    "Trường Đại Học Tây Nguyên",
+    "Bạn đang nghĩ gì?"
+  ],
+  "work": [
+    "Trình độ học vấn",
+    "Sở thích"
+  ],
+  "followers": "210",
+  "bio": "Bạn đang nghĩ gì?",
+  "profile_picture": "https://scontent.fbmv1-1.fna.fbcdn.net/v/t39.30808-1/672675350_122100536498738587_7308536178448315003_n.jpg?stp=c448.0.1152.1152a_cp0_dst-jpg_s40x40_tt6\u0026_nc_cat=107\u0026ccb=1-7\u0026_nc_sid=e99d92\u0026_nc_ohc=YOfS03hhmEIQ7kNvwF7dgkg\u0026_nc_oc=Adr9XguZxtcrGDdY7DDlkNdVgacTzsGRSgwdlVMzIRg64XDG6kV5NRsGu5IA9WsUO5E\u0026_nc_zt=24\u0026_nc_ht=scontent.fbmv1-1.fna\u0026_nc_gid=ebD5a1bXgK6DeLmuk-_RyA\u0026_nc_ss=7a3a8\u0026oh=00_Af2YXCOPQTLm-id5L5vDpM7kbRKiTzQqfPy6msgvAOdosA\u0026oe=69E7CD2F"
 }

@@ -30,6 +30,14 @@ const tabs = [
   { id: 'snapshots', label: 'Lịch sử' },
   { id: 'logs', label: 'Nhật ký' }
 ]
+
+const formatGender = (gender: string) => {
+  if (!gender) return '—'
+  const g = gender.toUpperCase()
+  if (g === 'MALE') return 'Nam'
+  if (g === 'FEMALE') return 'Nữ'
+  return gender
+}
 </script>
 
 <template>
@@ -89,7 +97,7 @@ const tabs = [
             <div class="info-card">
               <h4>Thông tin cơ bản</h4>
               <div class="info-row"><span class="label">Tên hiển thị:</span> <span class="val">{{ activeEntity.identity?.display_name || '—' }}</span></div>
-              <div class="info-row"><span class="label">Tên khác:</span> <span class="val">{{ activeEntity.identity?.alternate_name || '—' }}</span></div>
+              <div class="info-row"><span class="label">Giới tính:</span> <span class="val">{{ formatGender(activeEntity.basic_info?.gender) }}</span></div>
               <div class="info-row"><span class="label">Tiểu sử:</span> <span class="val">{{ activeEntity.basic_info?.bio || '—' }}</span></div>
               <div class="info-row"><span class="label">Ngày sinh:</span> <span class="val">{{ activeEntity.basic_info?.birthday_text || '—' }}</span></div>
             </div>

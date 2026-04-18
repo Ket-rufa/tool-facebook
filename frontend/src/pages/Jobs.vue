@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import TargetInputPanel from '../components/crawl/TargetInputPanel.vue'
-import CrawlConfigPanel from '../components/crawl/CrawlConfigPanel.vue'
 import RuntimeStatusPanel from '../components/crawl/RuntimeStatusPanel.vue'
 import RuntimeLogPanel from '../components/crawl/RuntimeLogPanel.vue'
 import EntityResultViewer from '../components/crawl/EntityResultViewer.vue'
@@ -221,10 +220,8 @@ const updateRuntimeSummary = () => {
         @add="handleAddTargets"
         @resolve="handleResolve"
         @clear="handleClear"
+        @run="handleRun"
       />
-      
-      <!-- Zone B: Configurations -->
-      <CrawlConfigPanel :config="config" @run="handleRun" />
       
       <!-- Zone C: Runtime Monitoring -->
       <RuntimeStatusPanel :status="runtime" />
@@ -266,10 +263,14 @@ const updateRuntimeSummary = () => {
 
 .operations-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 2fr 1fr;
   grid-template-rows: auto auto;
   gap: 20px;
   margin-bottom: 24px;
+}
+
+.operations-grid > :first-child {
+  grid-row: span 2;
 }
 
 .results-section {

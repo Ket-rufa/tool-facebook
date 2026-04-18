@@ -21,9 +21,34 @@ func TestExtractAboutTokensFromDebug(t *testing.T) {
 
 	h := &CrawlHandler{}
 	tokens := h.extractAboutTokens(body)
+	t.Logf("Extracted tokens: %+v", tokens)
 
 	if tokens.SectionToken == "" {
 		t.Log("Note: SectionToken is empty in this fixture")
+	}
+}
+
+func TestExtractAboutTokensFromTopSectionDebugUsesPageInfoCursor(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join("..", "..", "data", "last_ProfileCometTopAppSectionQuery_debug.json")
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		t.Skip("top section debug fixture not found, skipping")
+	}
+
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read top section debug fixture: %v", err)
+	}
+
+	h := &CrawlHandler{}
+	tokens := h.extractAboutTokens(body)
+
+	if tokens.RawSectionToken == "" {
+		t.Fatalf("expected RawSectionToken from page_info.end_cursor, got empty: %+v", tokens)
+	}
+	if tokens.AppSectionFeedKey == "" {
+		t.Fatalf("expected AppSectionFeedKey to be derived, got empty: %+v", tokens)
 	}
 }
 

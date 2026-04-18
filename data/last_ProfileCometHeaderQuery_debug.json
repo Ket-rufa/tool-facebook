@@ -1,1 +1,1 @@
-{"errors":[{"message":"The GraphQL document with ID 5380494448574168 was not found.","severity":"CRITICAL"}],"extensions":{"is_final":true}}
+{"data":{"user":{"profile_header_renderer":null,"id":"61572157625165","profile_plus_post_transition_modal":null}},"errors":[{"message":"A server error missing_required_variable_value occured. Check server logs for details.","severity":"WARNING"}],"extensions":{"server_metadata":{"request_start_time_ms":1776418597481,"time_at_flush_ms":1776418597504},"is_final":true}}

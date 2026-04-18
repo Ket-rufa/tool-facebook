@@ -702,10 +702,11 @@ func FetchSessionData(cookie string) (data SessionData, err error) {
 	dtsgPatterns := []string{
 		`"(NAfv[a-zA-Z0-9_\-\:]+)"`, // Ưu tiên hàng hiệu NAfv (Chìa khóa vạn năng cho mutations)
 		`"(NAfu[a-zA-Z0-9_\-\:]+)"`, // Ưu tiên mã NAfu
-		`"DTSGInitialData"\s*,\s*\[\s*\]\s*,\s*\{\s*"token"\s*:\s*"(.+?)"`,
-		`"DTSGInitData"\s*,\s*\[\s*\]\s*,\s*\{\s*"token"\s*:\s*"(.+?)"`,
-		`"fb_dtsg"\s*:\s*"(.+?)"`,
-		`name="fb_dtsg"\s*value="(.+?)"`,
+		`"DTSGInitialData"\s*,\s*\[\s*\]\s*,\s*\{\s*"token"\s*:\s*"([^"]*)"`,
+		`"DTSGInitData"\s*,\s*\[\s*\]\s*,\s*\{\s*"token"\s*:\s*"([^"]*)"`,
+		`\["DTSGInitData",\s*\[\],\{"token":"([^"]+)"\}`,
+		`"fb_dtsg"\s*:\s*"([^"]*)"`,
+		`name="fb_dtsg"\s*value="([^"]*)"`,
 	}
 	for _, pattern := range dtsgPatterns {
 		r := regexp.MustCompile(pattern)
